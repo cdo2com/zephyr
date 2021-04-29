@@ -129,8 +129,9 @@ static int spi_sam_configure(const struct device *dev,
 #endif /* CONFIG_CDO2_SPI_DEMUX */
 
 	regs->SPI_CR = SPI_CR_SPIEN; /* Enable SPI */
-
+	
 	data->ctx.config = config;
+	spi_context_cs_configure(&data->ctx);
 
 	return 0;
 }
