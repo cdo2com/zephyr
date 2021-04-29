@@ -9,7 +9,7 @@
 
 #define LOG_LEVEL CONFIG_SPI_LOG_LEVEL
 #include <logging/log.h>
-LOG_MODULE_REGISTER(spi_sam);
+LOG_MODULE_REGISTER(spi_sam_cdo2);
 
 #include "spi_context.h"
 #include <errno.h>
@@ -17,8 +17,6 @@ LOG_MODULE_REGISTER(spi_sam);
 #include <drivers/spi.h>
 #include <soc.h>
 
-#define SAM_SPI_CHIP_SELECT_COUNT                       4U
-#define SAM_SPI_CHIP_SELECT_COUNT_DEMUX                 15U
 
 /* Device constant configuration parameters */
 struct spi_sam_config {
@@ -33,10 +31,12 @@ struct spi_sam_data {
 	struct spi_context ctx;
 };
 
-#ifndef CONFIG_SPI_DEMUX
+#ifndef CONFIG_CDO2_SPI_DEMUX
+#define SAM_SPI_CHIP_SELECT_COUNT                       4U
+
 static int spi_slave_to_mr_pcs(int slave)
 {
-	int pcs[SAM_SPI_CHIP_SELECT_COUNT] = {0x0, 0x1, 0x3, 0x7};
+	int pcs[SAM_SPI_CHIP_SELECT_COUNT] = { 0x0, 0x1, 0x3, 0x7 };
 
 	/* SPI worked in fixed perieral mode(SPI_MR.PS = 0) and disabled chip
 	 * select decode(SPI_MR.PCSDEC = 0), based on Atmel | SMART ARM-based
@@ -49,7 +49,9 @@ static int spi_slave_to_mr_pcs(int slave)
 
 	return pcs[slave];
 }
-#endif /* CONFIG_SPI_DEMUX */
+#else
+#define SAM_SPI_CHIP_SELECT_COUNT                 15U
+#endif /* CONFIG_CDO2_SPI_DEMUX */
 
 static int spi_sam_configure(const struct device *dev,
 			     const struct spi_config *config)
@@ -69,26 +71,22 @@ static int spi_sam_configure(const struct device *dev,
 		/* Slave mode is not implemented. */
 		return -ENOTSUP;
 	}
-#ifdef CONFIG_SPI_DEMUX
-	if (config->slave > (SAM_SPI_CHIP_SELECT_COUNT_DEMUX - 1)) {
-		LOG_ERR("Slave %d is greater than %d (Demultiplexing mode)",
-			config->slave, SAM_SPI_CHIP_SELECT_COUNT_DEMUX - 1);
-		return -EINVAL;
-	}
+#ifdef CONFIG_CDO2_SPI_DEMUX
 	/* Set PCSDEC to 1 (Peripheral Chip Select Decoding)*/
 	spi_mr |= SPI_MR_PCSDEC;
 	spi_mr |= SPI_MR_PCS(config->slave);
 
 #else
+	/* Set fixed peripheral select mode. */
+	spi_mr |= SPI_MR_PCS(spi_slave_to_mr_pcs(config->slave));
+
+#endif /* CONFIG_CDO2_SPI_DEMUX */
+
 	if (config->slave > (SAM_SPI_CHIP_SELECT_COUNT - 1)) {
 		LOG_ERR("Slave %d is greater than %d",
 			config->slave, SAM_SPI_CHIP_SELECT_COUNT - 1);
 		return -EINVAL;
 	}
-	/* Set fixed peripheral select mode. */
-	spi_mr |= SPI_MR_PCS(spi_slave_to_mr_pcs(config->slave));
-
-#endif /* CONFIG_SPI_DEMUX */
 
 	/* Set master mode, disable mode fault detection */
 	spi_mr |= (SPI_MR_MSTR | SPI_MR_MODFDIS);
@@ -120,18 +118,19 @@ static int spi_sam_configure(const struct device *dev,
 	 * integer division.
 	 * e.g If we want to use CS2:
 	 * 2/4 = 0 -> SPI_CSR0
-	 * source: 41.7.3.7 in the SAM E70 MCU datasheet*/
-#ifdef CONFIG_SPI_DEMUX
-	uint8_t cs_reg_num = config->slave / SAM_SPI_CHIP_SELECT_COUNT;
+	 * source: 41.7.3.7 in the SAM E70 MCU datasheet
+	 */
+#ifdef CONFIG_CDO2_SPI_DEMUX
+	uint8_t cs_reg_num = config->slave / 4;
+
 	regs->SPI_CSR[cs_reg_num] = spi_csr;
 #else
 	regs->SPI_CSR[config->slave] = spi_csr;
-#endif /* CONFIG_SPI_DEMUX */
+#endif /* CONFIG_CDO2_SPI_DEMUX */
 
 	regs->SPI_CR = SPI_CR_SPIEN; /* Enable SPI */
 
 	data->ctx.config = config;
-	spi_context_cs_configure(&data->ctx);
 
 	return 0;
 }
@@ -209,32 +208,14 @@ static void spi_sam_fast_rx(Spi *regs, const struct spi_buf *rx_buf)
 		return;
 	}
 
-	/* See the comment in spi_sam_fast_txrx re: interleaving. */
-
-	/* Write the first byte */
-	regs->SPI_TDR = SPI_TDR_TD(0);
-	len--;
-
-	while (len) {
+	for (int i=0;i<(len);i++){
+		regs->SPI_TDR = SPI_TDR_TD(0);
 		while ((regs->SPI_SR & SPI_SR_TDRE) == 0) {
 		}
-
-		/* Load byte N+1 into the transmit register */
-		regs->SPI_TDR = SPI_TDR_TD(0);
-		len--;
-
-		/* Read byte N+0 from the receive register */
 		while ((regs->SPI_SR & SPI_SR_RDRF) == 0) {
 		}
-
 		*rx++ = (uint8_t)regs->SPI_RDR;
 	}
-
-	/* Read the final incoming byte */
-	while ((regs->SPI_SR & SPI_SR_RDRF) == 0) {
-	}
-
-	*rx = (uint8_t)regs->SPI_RDR;
 
 	spi_sam_finish(regs);
 }
@@ -412,7 +393,6 @@ static int spi_sam_transceive(const struct device *dev,
 		spi_sam_fast_transceive(dev, config, tx_bufs, rx_bufs);
 	} else {
 		spi_context_buffers_setup(&data->ctx, tx_bufs, rx_bufs, 1);
-
 		do {
 			spi_sam_shift_master(regs, data);
 		} while (spi_sam_transfer_ongoing(data));
@@ -426,19 +406,19 @@ done:
 }
 
 static int spi_sam_transceive_sync(const struct device *dev,
-				    const struct spi_config *config,
-				    const struct spi_buf_set *tx_bufs,
-				    const struct spi_buf_set *rx_bufs)
+				   const struct spi_config *config,
+				   const struct spi_buf_set *tx_bufs,
+				   const struct spi_buf_set *rx_bufs)
 {
 	return spi_sam_transceive(dev, config, tx_bufs, rx_bufs);
 }
 
 #ifdef CONFIG_SPI_ASYNC
 static int spi_sam_transceive_async(const struct device *dev,
-				     const struct spi_config *config,
-				     const struct spi_buf_set *tx_bufs,
-				     const struct spi_buf_set *rx_bufs,
-				     struct k_poll_signal *async)
+				    const struct spi_config *config,
+				    const struct spi_buf_set *tx_bufs,
+				    const struct spi_buf_set *rx_bufs,
+				    struct k_poll_signal *async)
 {
 	/* TODO: implement asyc transceive */
 	return -ENOTSUP;
@@ -481,23 +461,24 @@ static const struct spi_driver_api spi_sam_driver_api = {
 	.release = spi_sam_release,
 };
 
-#define SPI_SAM_DEFINE_CONFIG(n)					\
-	static const struct spi_sam_config spi_sam_config_##n = {	\
-		.regs = (Spi *)DT_INST_REG_ADDR(n),			\
-		.periph_id = DT_INST_PROP(n, peripheral_id),		\
-		.num_pins = ATMEL_SAM_DT_NUM_PINS(n),			\
-		.pins = ATMEL_SAM_DT_PINS(n),				\
+#define SPI_SAM_DEFINE_CONFIG(n)				  \
+	static const struct spi_sam_config spi_sam_config_##n = { \
+		.regs = (Spi *)DT_INST_REG_ADDR(n),		  \
+		.periph_id = DT_INST_PROP(n, peripheral_id),	  \
+		.num_pins = ATMEL_SAM_DT_NUM_PINS(n),		  \
+		.pins = ATMEL_SAM_DT_PINS(n),			  \
 	}
 
-#define SPI_SAM_DEVICE_INIT(n)						\
-	SPI_SAM_DEFINE_CONFIG(n);					\
-	static struct spi_sam_data spi_sam_dev_data_##n = {		\
-		SPI_CONTEXT_INIT_LOCK(spi_sam_dev_data_##n, ctx),	\
-		SPI_CONTEXT_INIT_SYNC(spi_sam_dev_data_##n, ctx),	\
-	};								\
-	DEVICE_DT_INST_DEFINE(n, &spi_sam_init, device_pm_control_nop,	\
-			    &spi_sam_dev_data_##n,			\
-			    &spi_sam_config_##n, POST_KERNEL,		\
-			    CONFIG_SPI_INIT_PRIORITY, &spi_sam_driver_api);
+#define SPI_SAM_DEVICE_INIT(n)					       \
+	SPI_SAM_DEFINE_CONFIG(n);				       \
+	static struct spi_sam_data spi_sam_dev_data_##n = {	       \
+		SPI_CONTEXT_INIT_LOCK(spi_sam_dev_data_##n, ctx),      \
+		SPI_CONTEXT_INIT_SYNC(spi_sam_dev_data_##n, ctx),      \
+	};							       \
+	DEVICE_DT_INST_DEFINE(n, &spi_sam_init, device_pm_control_nop, \
+			      &spi_sam_dev_data_##n,		       \
+			      &spi_sam_config_##n, POST_KERNEL,	       \
+			      CONFIG_SPI_INIT_PRIORITY, &spi_sam_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(SPI_SAM_DEVICE_INIT)
+
