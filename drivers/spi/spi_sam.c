@@ -9,7 +9,7 @@
 
 #define LOG_LEVEL CONFIG_SPI_LOG_LEVEL
 #include <logging/log.h>
-LOG_MODULE_REGISTER(spi_sam_cdo2);
+LOG_MODULE_REGISTER(spi_sam);
 
 #include "spi_context.h"
 #include <errno.h>
@@ -31,7 +31,7 @@ struct spi_sam_data {
 	struct spi_context ctx;
 };
 
-#ifndef CONFIG_CDO2_SPI_DEMUX
+#ifndef CONFIG_SPI_DEMUX
 #define SAM_SPI_CHIP_SELECT_COUNT                       4U
 
 static int spi_slave_to_mr_pcs(int slave)
@@ -51,7 +51,7 @@ static int spi_slave_to_mr_pcs(int slave)
 }
 #else
 #define SAM_SPI_CHIP_SELECT_COUNT                 15U
-#endif /* CONFIG_CDO2_SPI_DEMUX */
+#endif /* CONFIG_SPI_DEMUX */
 
 static int spi_sam_configure(const struct device *dev,
 			     const struct spi_config *config)
@@ -71,7 +71,7 @@ static int spi_sam_configure(const struct device *dev,
 		/* Slave mode is not implemented. */
 		return -ENOTSUP;
 	}
-#ifdef CONFIG_CDO2_SPI_DEMUX
+#ifdef CONFIG_SPI_DEMUX
 	/* Set PCSDEC to 1 (Peripheral Chip Select Decoding)*/
 	spi_mr |= SPI_MR_PCSDEC;
 	spi_mr |= SPI_MR_PCS(config->slave);
@@ -80,7 +80,7 @@ static int spi_sam_configure(const struct device *dev,
 	/* Set fixed peripheral select mode. */
 	spi_mr |= SPI_MR_PCS(spi_slave_to_mr_pcs(config->slave));
 
-#endif /* CONFIG_CDO2_SPI_DEMUX */
+#endif /* CONFIG_SPI_DEMUX */
 
 	if (config->slave > (SAM_SPI_CHIP_SELECT_COUNT - 1)) {
 		LOG_ERR("Slave %d is greater than %d",
@@ -120,13 +120,13 @@ static int spi_sam_configure(const struct device *dev,
 	 * 2/4 = 0 -> SPI_CSR0
 	 * source: 41.7.3.7 in the SAM E70 MCU datasheet
 	 */
-#ifdef CONFIG_CDO2_SPI_DEMUX
+#ifdef CONFIG_SPI_DEMUX
 	uint8_t cs_reg_num = config->slave / 4;
 
 	regs->SPI_CSR[cs_reg_num] = spi_csr;
 #else
 	regs->SPI_CSR[config->slave] = spi_csr;
-#endif /* CONFIG_CDO2_SPI_DEMUX */
+#endif /* CONFIG_SPI_DEMUX */
 
 	regs->SPI_CR = SPI_CR_SPIEN; /* Enable SPI */
 	
