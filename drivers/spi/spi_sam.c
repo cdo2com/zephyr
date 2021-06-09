@@ -219,6 +219,41 @@ static void spi_sam_fast_rx(Spi *regs, const struct spi_buf *rx_buf)
 	}
 
 	spi_sam_finish(regs);
+//	uint8_t *rx = rx_buf->buf;
+//	int len = rx_buf->len;
+//
+//	if (len <= 0) {
+//		return;
+//	}
+//
+//	/* See the comment in spi_sam_fast_txrx re: interleaving. */
+//
+//	/* Write the first byte */
+//	regs->SPI_TDR = SPI_TDR_TD(0);
+//	len--;
+//
+//	while (len) {
+//		while ((regs->SPI_SR & SPI_SR_TDRE) == 0) {
+//		}
+//
+//		/* Load byte N+1 into the transmit register */
+//		regs->SPI_TDR = SPI_TDR_TD(0);
+//		len--;
+//
+//		/* Read byte N+0 from the receive register */
+//		while ((regs->SPI_SR & SPI_SR_RDRF) == 0) {
+//		}
+//
+//		*rx++ = (uint8_t)regs->SPI_RDR;
+//	}
+//
+//	/* Read the final incoming byte */
+//	while ((regs->SPI_SR & SPI_SR_RDRF) == 0) {
+//	}
+//
+//	*rx = (uint8_t)regs->SPI_RDR;
+//
+//	spi_sam_finish(regs);
 }
 
 /* Fast path that writes and reads bufs of the same length */
@@ -235,45 +270,55 @@ static void spi_sam_fast_txrx(Spi *regs,
 		return;
 	}
 
-	/*
-	 * The code below interleaves the transmit writes with the
-	 * receive reads to keep the bus fully utilised.  The code is
-	 * equivalent to:
-	 *
-	 * Transmit byte 0
-	 * Loop:
-	 * - Transmit byte n+1
-	 * - Receive byte n
-	 * Receive the final byte
-	 */
+//	/*
+//	 * The code below interleaves the transmit writes with the
+//	 * receive reads to keep the bus fully utilised.  The code is
+//	 * equivalent to:
+//	 *
+//	 * Transmit byte 0
+//	 * Loop:
+//	 * - Transmit byte n+1
+//	 * - Receive byte n
+//	 * Receive the final byte
+//	 */
+//
+//	/* Write the first byte */
+//	regs->SPI_TDR = SPI_TDR_TD(*tx++);
+//
+//	while (tx != txend) {
+//		while ((regs->SPI_SR & SPI_SR_TDRE) == 0) {
+//		}
+//
+//		/* Load byte N+1 into the transmit register.  TX is
+//		 * single buffered and we have at most one byte in
+//		 * flight so skip the DRE check.
+//		 */
+//		regs->SPI_TDR = SPI_TDR_TD(*tx++);
+//
+//		/* Read byte N+0 from the receive register */
+//		while ((regs->SPI_SR & SPI_SR_RDRF) == 0) {
+//		}
+//
+//		*rx++ = (uint8_t)regs->SPI_RDR;
+//	}
+//
+//	/* Read the final incoming byte */
+//	while ((regs->SPI_SR & SPI_SR_RDRF) == 0) {
+//	}
+//
+//	*rx = (uint8_t)regs->SPI_RDR;
+//
+//	spi_sam_finish(regs);
 
-	/* Write the first byte */
-	regs->SPI_TDR = SPI_TDR_TD(*tx++);
 
-	while (tx != txend) {
+	for (int i=0;i<(len);i++){
+		regs->SPI_TDR = SPI_TDR_TD(*tx++);
 		while ((regs->SPI_SR & SPI_SR_TDRE) == 0) {
 		}
-
-		/* Load byte N+1 into the transmit register.  TX is
-		 * single buffered and we have at most one byte in
-		 * flight so skip the DRE check.
-		 */
-		regs->SPI_TDR = SPI_TDR_TD(*tx++);
-
-		/* Read byte N+0 from the receive register */
 		while ((regs->SPI_SR & SPI_SR_RDRF) == 0) {
 		}
-
 		*rx++ = (uint8_t)regs->SPI_RDR;
 	}
-
-	/* Read the final incoming byte */
-	while ((regs->SPI_SR & SPI_SR_RDRF) == 0) {
-	}
-
-	*rx = (uint8_t)regs->SPI_RDR;
-
-	spi_sam_finish(regs);
 }
 
 /* Fast path where every overlapping tx and rx buffer is the same length */
