@@ -26,6 +26,7 @@
 #elif defined(CONFIG_SOC_NRF5340_CPUNET)
 #include <hal/nrf_nvmc.h>
 #endif
+#include <soc_secure.h>
 
 #define PIN_XL1 0
 #define PIN_XL2 1
@@ -57,19 +58,56 @@ static int nordicsemi_nrf53_init(const struct device *arg)
 	key = irq_lock();
 
 #if defined(CONFIG_SOC_NRF5340_CPUAPP) && defined(CONFIG_NRF_ENABLE_CACHE)
-	/* Enable the instruction & data cache */
+#if !defined(CONFIG_BUILD_WITH_TFM)
+	/* Enable the instruction & data cache.
+	 * This can only be done from secure code.
+	 * This is handled by the TF-M platform so we skip it when TF-M is
+	 * enabled.
+	 */
 	nrf_cache_enable(NRF_CACHE);
+#endif
 #elif defined(CONFIG_SOC_NRF5340_CPUNET) && defined(CONFIG_NRF_ENABLE_CACHE)
 	nrf_nvmc_icache_config_set(NRF_NVMC, NRF_NVMC_ICACHE_ENABLE);
 #endif
 
-#if defined(CONFIG_SOC_NRF5340_CPUAPP) && \
-	!defined(CONFIG_TRUSTED_EXECUTION_NONSECURE) && \
-	defined(CONFIG_SOC_ENABLE_LFXO)
+#if defined(CONFIG_SOC_ENABLE_LFXO)
 	nrf_oscillators_lfxo_cap_set(NRF_OSCILLATORS,
-				     NRF_OSCILLATORS_LFXO_CAP_6PF);
+		IS_ENABLED(CONFIG_SOC_LFXO_CAP_INT_6PF) ?
+			NRF_OSCILLATORS_LFXO_CAP_6PF :
+		IS_ENABLED(CONFIG_SOC_LFXO_CAP_INT_7PF) ?
+			NRF_OSCILLATORS_LFXO_CAP_7PF :
+		IS_ENABLED(CONFIG_SOC_LFXO_CAP_INT_9PF) ?
+			NRF_OSCILLATORS_LFXO_CAP_9PF :
+			NRF_OSCILLATORS_LFXO_CAP_EXTERNAL);
+#if !defined(CONFIG_BUILD_WITH_TFM)
+	/* This can only be done from secure code.
+	 * This is handled by the TF-M platform so we skip it when TF-M is
+	 * enabled.
+	 */
 	nrf_gpio_pin_mcu_select(PIN_XL1, NRF_GPIO_PIN_MCUSEL_PERIPHERAL);
 	nrf_gpio_pin_mcu_select(PIN_XL2, NRF_GPIO_PIN_MCUSEL_PERIPHERAL);
+#endif /* !defined(CONFIG_BUILD_WITH_TFM) */
+#endif /* defined(CONFIG_SOC_ENABLE_LFXO) */
+#if defined(CONFIG_SOC_HFXO_CAP_INTERNAL)
+	/* This register is only accessible from secure code. */
+	uint32_t xosc32mtrim = soc_secure_read_xosc32mtrim();
+	/* As specified in the nRF5340 PS:
+	 * CAPVALUE = (((FICR->XOSC32MTRIM.SLOPE+56)*(CAPACITANCE*2-14))
+	 *            +((FICR->XOSC32MTRIM.OFFSET-8)<<4)+32)>>6;
+	 * where CAPACITANCE is the desired capacitor value in pF, holding any
+	 * value between 7.0 pF and 20.0 pF in 0.5 pF steps.
+	 */
+	uint32_t slope = (xosc32mtrim & FICR_XOSC32MTRIM_SLOPE_Msk)
+			 >> FICR_XOSC32MTRIM_SLOPE_Pos;
+	uint32_t offset = (xosc32mtrim & FICR_XOSC32MTRIM_OFFSET_Msk)
+			  >> FICR_XOSC32MTRIM_OFFSET_Pos;
+	uint32_t capvalue =
+		((slope + 56) * (CONFIG_SOC_HFXO_CAP_INT_VALUE_X2 - 14)
+		 + ((offset - 8) << 4) + 32) >> 6;
+
+	nrf_oscillators_hfxo_cap_set(NRF_OSCILLATORS, true, capvalue);
+#elif defined(CONFIG_SOC_HFXO_CAP_EXTERNAL)
+	nrf_oscillators_hfxo_cap_set(NRF_OSCILLATORS, false, 0);
 #endif
 
 #if defined(CONFIG_SOC_DCDC_NRF53X_APP)
@@ -95,11 +133,6 @@ static int nordicsemi_nrf53_init(const struct device *arg)
 void arch_busy_wait(uint32_t time_us)
 {
 	nrfx_coredep_delay_us(time_us);
-}
-
-void z_platform_init(void)
-{
-	SystemInit();
 }
 
 SYS_INIT(nordicsemi_nrf53_init, PRE_KERNEL_1, 0);

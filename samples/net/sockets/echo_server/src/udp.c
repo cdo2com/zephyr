@@ -77,12 +77,6 @@ static int start_udp_proto(struct data *data, struct sockaddr *bind_addr,
 	}
 #endif
 
-#if defined(CONFIG_NET_CONTEXT_TIMESTAMP)
-	bool val = 1;
-
-	setsockopt(data->udp.sock, SOL_SOCKET, SO_TIMESTAMPING, &val, sizeof(val));
-#endif
-
 	ret = bind(data->udp.sock, bind_addr, bind_addrlen);
 	if (ret < 0) {
 		NET_ERR("Failed to bind UDP socket (%s): %d", data->proto,
@@ -194,7 +188,8 @@ static void process_udp6(void)
 
 static void print_stats(struct k_work *work)
 {
-	struct data *data = CONTAINER_OF(work, struct data, udp.stats_print);
+	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+	struct data *data = CONTAINER_OF(dwork, struct data, udp.stats_print);
 	int total_received = atomic_get(&data->udp.bytes_received);
 
 	if (total_received) {

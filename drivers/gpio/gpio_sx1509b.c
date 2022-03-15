@@ -313,7 +313,7 @@ static int sx1509b_config(const struct device *dev,
 	 * Until something more general is available reject any
 	 * attempt to set a non-default drive strength.
 	 */
-	if ((flags & (GPIO_DS_ALT_LOW | GPIO_DS_ALT_HIGH)) != 0) {
+	if ((flags & GPIO_DS_ALT) != 0) {
 		return -ENOTSUP;
 	}
 
@@ -453,7 +453,10 @@ static int port_write(const struct device *dev,
 
 	const struct sx1509b_config *cfg = dev->config;
 	struct sx1509b_drv_data *drv_data = dev->data;
-	uint16_t *outp = &drv_data->pin_state.data;
+	void *data = &drv_data->pin_state.data;
+	uint16_t *outp = data;
+
+	__ASSERT_NO_MSG(IS_PTR_ALIGNED(data, uint16_t));
 
 	k_sem_take(&drv_data->lock, K_FOREVER);
 
@@ -784,7 +787,7 @@ static struct sx1509b_drv_data sx1509b_drvdata = {
 	.lock = Z_SEM_INITIALIZER(sx1509b_drvdata.lock, 1, 1),
 };
 
-DEVICE_DT_INST_DEFINE(0, sx1509b_init, device_pm_control_nop,
+DEVICE_DT_INST_DEFINE(0, sx1509b_init, NULL,
 		 &sx1509b_drvdata, &sx1509b_cfg,
 		 POST_KERNEL, CONFIG_GPIO_SX1509B_INIT_PRIORITY,
 		 &api_table);

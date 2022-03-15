@@ -22,7 +22,15 @@ set(ZEPHYR_DTS                  ${PROJECT_BINARY_DIR}/zephyr.dts)
 set(EDT_PICKLE                  ${PROJECT_BINARY_DIR}/edt.pickle)
 set(DEVICETREE_UNFIXED_H        ${PROJECT_BINARY_DIR}/include/generated/devicetree_unfixed.h)
 set(DEVICE_EXTERN_H             ${PROJECT_BINARY_DIR}/include/generated/device_extern.h)
-set(DTS_POST_CPP                ${PROJECT_BINARY_DIR}/${BOARD}.dts.pre.tmp)
+set(DTS_POST_CPP                ${PROJECT_BINARY_DIR}/zephyr.dts.pre)
+set(DTS_DEPS                    ${PROJECT_BINARY_DIR}/zephyr.dts.d)
+# The location of a list of known vendor prefixes.
+# This is relative to each element of DTS_ROOT.
+set(VENDOR_PREFIXES             dts/bindings/vendor-prefixes.txt)
+
+# Devicetree in CMake.
+set(DTS_CMAKE_SCRIPT            ${ZEPHYR_BASE}/scripts/dts/gen_dts_cmake.py)
+set(DTS_CMAKE                   ${PROJECT_BINARY_DIR}/dts.cmake)
 
 set_ifndef(DTS_SOURCE ${BOARD_DIR}/${BOARD}.dts)
 
@@ -88,6 +96,7 @@ if(SUPPORTS_DTS)
   endforeach()
 
   unset(DTS_ROOT_SYSTEM_INCLUDE_DIRS)
+  unset(DTS_ROOT_BINDINGS)
   foreach(dts_root ${DTS_ROOT})
     foreach(dts_root_path
         include
@@ -103,16 +112,18 @@ if(SUPPORTS_DTS)
           )
       endif()
     endforeach()
-  endforeach()
 
-  unset(DTS_ROOT_BINDINGS)
-  foreach(dts_root ${DTS_ROOT})
-    set(full_path ${dts_root}/dts/bindings)
-    if(EXISTS ${full_path})
+    set(bindings_path ${dts_root}/dts/bindings)
+    if(EXISTS ${bindings_path})
       list(APPEND
         DTS_ROOT_BINDINGS
-        ${full_path}
+        ${bindings_path}
         )
+    endif()
+
+    set(vendor_prefixes ${dts_root}/${VENDOR_PREFIXES})
+    if(EXISTS ${vendor_prefixes})
+      list(APPEND EXTRA_GEN_DEFINES_ARGS --vendor-prefixes ${vendor_prefixes})
     endif()
   endforeach()
 
@@ -131,10 +142,9 @@ if(SUPPORTS_DTS)
   # preprocessor, and it seems to be including all kinds of
   # directories with who-knows how many header files.
 
-  # Run the C preprocessor on an empty C source file that has one or
-  # more DTS source files -include'd into it to create the
-  # intermediary file *.dts.pre.tmp. Also, generate a dependency file
-  # so that changes to DT sources are detected.
+  # Run the preprocessor on the DTS input files. We are leaving
+  # linemarker directives enabled on purpose. This tells dtlib where
+  # each line actually came from, which improves error reporting.
   execute_process(
     COMMAND ${CMAKE_DTS_PREPROCESSOR}
     -x assembler-with-cpp
@@ -144,11 +154,10 @@ if(SUPPORTS_DTS)
     ${NOSYSDEF_CFLAG}
     -D__DTS__
     ${DTS_EXTRA_CPPFLAGS}
-    -P
     -E   # Stop after preprocessing
     -MD  # Generate a dependency file as a side-effect
-    -MF ${PROJECT_BINARY_DIR}/${BOARD}.dts.pre.d
-    -o  ${PROJECT_BINARY_DIR}/${BOARD}.dts.pre.tmp
+    -MF ${DTS_DEPS}
+    -o ${DTS_POST_CPP}
     ${ZEPHYR_BASE}/misc/empty_file.c
     WORKING_DIRECTORY ${APPLICATION_SOURCE_DIR}
     RESULT_VARIABLE ret
@@ -158,10 +167,9 @@ if(SUPPORTS_DTS)
   endif()
 
   # Parse the generated dependency file to find the DT sources that
-  # were included and then add them to the list of files that trigger
-  # a re-run of CMake.
-  toolchain_parse_make_rule(
-    ${PROJECT_BINARY_DIR}/${BOARD}.dts.pre.d
+  # were included, including any transitive includes, and then add
+  # them to the list of files that trigger a re-run of CMake.
+  toolchain_parse_make_rule(${DTS_DEPS}
     include_files # Output parameter
     )
 
@@ -169,12 +177,60 @@ if(SUPPORTS_DTS)
     CMAKE_CONFIGURE_DEPENDS
     ${include_files}
     ${GEN_DEFINES_SCRIPT}
+    ${DTS_CMAKE_SCRIPT}
     )
 
   #
-  # Run the C devicetree compiler on *.dts.pre.tmp, just to catch any
+  # Run gen_defines.py to create a header file, zephyr.dts, and edt.pickle.
+  #
+
+  string(REPLACE ";" " " EXTRA_DTC_FLAGS_RAW "${EXTRA_DTC_FLAGS}")
+  set(CMD_EXTRACT ${PYTHON_EXECUTABLE} ${GEN_DEFINES_SCRIPT}
+  --dts ${DTS_POST_CPP}
+  --dtc-flags '${EXTRA_DTC_FLAGS_RAW}'
+  --bindings-dirs ${DTS_ROOT_BINDINGS}
+  --header-out ${DEVICETREE_UNFIXED_H}.new
+  --device-header-out ${DEVICE_EXTERN_H}.new
+  --dts-out ${ZEPHYR_DTS}.new # for debugging and dtc
+  --edt-pickle-out ${EDT_PICKLE}
+  ${EXTRA_GEN_DEFINES_ARGS}
+  )
+
+  execute_process(
+    COMMAND ${CMD_EXTRACT}
+    WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
+    RESULT_VARIABLE ret
+    )
+  if(NOT "${ret}" STREQUAL "0")
+    message(FATAL_ERROR "gen_defines.py failed with return code: ${ret}")
+  else()
+    zephyr_file_copy(${ZEPHYR_DTS}.new ${ZEPHYR_DTS} ONLY_IF_DIFFERENT)
+    zephyr_file_copy(${DEVICETREE_UNFIXED_H}.new ${DEVICETREE_UNFIXED_H} ONLY_IF_DIFFERENT)
+    zephyr_file_copy(${DEVICE_EXTERN_H}.new ${DEVICE_EXTERN_H})
+    file(REMOVE ${ZEPHYR_DTS}.new ${DEVICETREE_UNFIXED_H}.new ${DEVICE_EXTERN_H}.new)
+    message(STATUS "Generated zephyr.dts: ${ZEPHYR_DTS}")
+    message(STATUS "Generated devicetree_unfixed.h: ${DEVICETREE_UNFIXED_H}")
+    message(STATUS "Generated device_extern.h: ${DEVICE_EXTERN_H}")
+  endif()
+
+  execute_process(
+    COMMAND ${PYTHON_EXECUTABLE} ${DTS_CMAKE_SCRIPT}
+    --edt-pickle ${EDT_PICKLE}
+    --cmake-out ${DTS_CMAKE}
+    WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
+    RESULT_VARIABLE ret
+    )
+  if(NOT "${ret}" STREQUAL "0")
+    message(FATAL_ERROR "gen_dts_cmake.py failed with return code: ${ret}")
+  else()
+    message(STATUS "Including generated dts.cmake file: ${DTS_CMAKE}")
+    include(${DTS_CMAKE})
+  endif()
+
+  #
+  # Run dtc on the final devicetree source, just to catch any
   # warnings/errors from it. dtlib and edtlib parse the devicetree files
-  # themselves, so we don't rely on the C compiler otherwise.
+  # themselves, so we don't rely on dtc otherwise.
   #
 
   if(DTC)
@@ -205,7 +261,7 @@ if(SUPPORTS_DTS)
     ${DTC_NO_WARN_UNIT_ADDR}
     ${DTC_WARN_UNIT_ADDR_IF_ENABLED}
     ${EXTRA_DTC_FLAGS} # User settable
-    ${BOARD}.dts.pre.tmp
+    ${ZEPHYR_DTS}
     OUTPUT_QUIET # Discard stdout
     WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
     RESULT_VARIABLE ret
@@ -214,42 +270,8 @@ if(SUPPORTS_DTS)
     message(FATAL_ERROR "command failed with return code: ${ret}")
   endif()
   endif(DTC)
-
-  #
-  # Run gen_defines.py to create a header file, zephyr.dts, and edt.pickle.
-  #
-
-  string(REPLACE ";" " " EXTRA_DTC_FLAGS_RAW "${EXTRA_DTC_FLAGS}")
-  set(CMD_EXTRACT ${PYTHON_EXECUTABLE} ${GEN_DEFINES_SCRIPT}
-  --dts ${BOARD}.dts.pre.tmp
-  --dtc-flags '${EXTRA_DTC_FLAGS_RAW}'
-  --bindings-dirs ${DTS_ROOT_BINDINGS}
-  --header-out ${DEVICETREE_UNFIXED_H}
-  --device-header-out ${DEVICE_EXTERN_H}
-  --dts-out ${ZEPHYR_DTS} # As a debugging aid
-  --edt-pickle-out ${EDT_PICKLE}
-  ${EXTRA_GEN_DEFINES_ARGS}
-  )
-
-  execute_process(
-    COMMAND ${CMD_EXTRACT}
-    WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
-    RESULT_VARIABLE ret
-    )
-  if(NOT "${ret}" STREQUAL "0")
-    message(FATAL_ERROR "gen_defines.py failed with return code: ${ret}")
-  else()
-    message(STATUS "Generated zephyr.dts: ${ZEPHYR_DTS}")
-    message(STATUS "Generated devicetree_unfixed.h: ${DEVICETREE_UNFIXED_H}")
-    message(STATUS "Generated device_extern.h: ${DEVICE_EXTERN_H}")
-  endif()
-
-  # A file that used to be generated by 'dtc'. zephyr.dts is the new
-  # equivalent. Will be removed in Zephyr 2.3.
-  file(WRITE ${PROJECT_BINARY_DIR}/${BOARD}.dts_compiled
-       "See zephyr.dts for the final merged devicetree.")
-
 else()
-  file(WRITE ${DEVICETREE_UNFIXED_H} "/* WARNING. THIS FILE IS AUTO-GENERATED. DO NOT MODIFY! */")
-  file(WRITE ${DEVICE_EXTERN_H} "/* WARNING. THIS FILE IS AUTO-GENERATED. DO NOT MODIFY! */")
+  set(header_template ${ZEPHYR_BASE}/misc/generated/generated_header.template)
+  zephyr_file_copy(${header_template} ${DEVICETREE_UNFIXED_H} ONLY_IF_DIFFERENT)
+  zephyr_file_copy(${header_template} ${DEVICE_EXTERN_H} ONLY_IF_DIFFERENT)
 endif(SUPPORTS_DTS)

@@ -24,12 +24,9 @@ struct pinmux_sifive_regs_t {
 	uint32_t iof_sel;
 };
 
-#define DEV_CFG(dev)					\
-	((const struct pinmux_sifive_config * const)	\
-	 (dev)->config)
-
 #define DEV_PINMUX(dev)						\
-	((struct pinmux_sifive_regs_t *)(DEV_CFG(dev))->base)
+	((struct pinmux_sifive_regs_t *)			\
+	 ((const struct pinmux_sifive_config * const)(dev->config))->base)
 
 static int pinmux_sifive_set(const struct device *dev, uint32_t pin,
 			     uint32_t func)
@@ -100,7 +97,7 @@ static const struct pinmux_sifive_config pinmux_sifive_0_config = {
 };
 
 DEVICE_DT_INST_DEFINE(0,
-		    &pinmux_sifive_init, device_pm_control_nop, NULL,
+		    &pinmux_sifive_init, NULL, NULL,
 		    &pinmux_sifive_0_config,
 		    PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
 		    &pinmux_sifive_driver_api);

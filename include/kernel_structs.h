@@ -23,16 +23,17 @@
 #if !defined(_ASMLANGUAGE)
 #include <sys/atomic.h>
 #include <zephyr/types.h>
-#include <sched_priq.h>
+#include <kernel/sched_priq.h>
 #include <sys/dlist.h>
 #include <sys/util.h>
 #include <sys/sys_heap.h>
+#include <arch/structs.h>
+#include <kernel/stats.h>
 #endif
 
-#define K_NUM_PRIORITIES \
-	(CONFIG_NUM_COOP_PRIORITIES + CONFIG_NUM_PREEMPT_PRIORITIES + 1)
-
-#define K_NUM_PRIO_BITMAPS ((K_NUM_PRIORITIES + 31) >> 5)
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * Bitmask definitions for the struct k_thread.thread_state field.
@@ -109,6 +110,10 @@ struct _cpu {
 	/* one assigned idle thread per CPU */
 	struct k_thread *idle_thread;
 
+#ifdef CONFIG_SCHED_CPU_MASK_PIN_ONLY
+	struct _ready_q ready_q;
+#endif
+
 #if (CONFIG_NUM_METAIRQ_PRIORITIES > 0) && (CONFIG_NUM_COOP_PRIORITIES > 0)
 	/* Coop thread preempted by current metairq, or NULL */
 	struct k_thread *metairq_preempted;
@@ -125,17 +130,29 @@ struct _cpu {
 	/* True when _current is allowed to context switch */
 	uint8_t swap_ok;
 #endif
+
+#ifdef CONFIG_SCHED_THREAD_USAGE
+	/*
+	 * [usage0] is used as a timestamp to mark the beginning of an
+	 * execution window. [0] is a special value indicating that it
+	 * has been stopped (but not disabled).
+	 */
+
+	uint32_t usage0;
+
+#ifdef CONFIG_SCHED_THREAD_USAGE_ALL
+	struct k_cycle_stats usage;
+#endif
+#endif
+
+	/* Per CPU architecture specifics */
+	struct _cpu_arch arch;
 };
 
 typedef struct _cpu _cpu_t;
 
 struct z_kernel {
 	struct _cpu cpus[CONFIG_MP_NUM_CPUS];
-
-#ifdef CONFIG_SYS_CLOCK_EXISTS
-	/* queue of timeouts */
-	sys_dlist_t timeout_q;
-#endif
 
 #ifdef CONFIG_PM
 	int32_t idle; /* Number of ticks for kernel idling */
@@ -145,7 +162,9 @@ struct z_kernel {
 	 * ready queue: can be big, keep after small fields, since some
 	 * assembly (e.g. ARC) are limited in the encoding of the offset
 	 */
+#ifndef CONFIG_SCHED_CPU_MASK_PIN_ONLY
 	struct _ready_q ready_q;
+#endif
 
 #ifdef CONFIG_FPU_SHARING
 	/*
@@ -179,14 +198,12 @@ bool z_smp_cpu_mobile(void);
 
 #define _current_cpu ({ __ASSERT_NO_MSG(!z_smp_cpu_mobile()); \
 			arch_curr_cpu(); })
-#define _current k_current_get()
+#define _current z_current_get()
 
 #else
 #define _current_cpu (&_kernel.cpus[0])
 #define _current _kernel.cpus[0].current
 #endif
-
-#define _timeout_q _kernel.timeout_q
 
 /* kernel wait queue record */
 
@@ -225,6 +242,10 @@ struct _timeout {
 	int32_t dticks;
 #endif
 };
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _ASMLANGUAGE */
 

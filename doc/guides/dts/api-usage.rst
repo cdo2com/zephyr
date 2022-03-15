@@ -73,7 +73,7 @@ Here's a DTS fragment for some imaginary hardware we'll return to throughout
 this file for examples:
 
 .. literalinclude:: main-example.dts
-   :language: DTS
+   :language: devicetree
    :start-after: start-after-here
 
 Here are a few ways to get node identifiers for the ``i2c@40002000`` node:
@@ -174,11 +174,17 @@ number 0 or 1 in the case of booleans. For example:
 
    DT_PROP(I2C1, status)  /* expands to the string literal "okay" */
 
+.. note::
+
+   Don't use DT_NODE_HAS_PROP() for boolean properties. Use DT_PROP() instead
+   as shown above. It will expand to either 0 or 1 depending on if the property
+   is present or absent.
+
 Properties with type ``array``, ``uint8-array``, and ``string-array`` work
 similarly, except ``DT_PROP()`` expands to an array initializer in these cases.
 Here is an example devicetree fragment:
 
-.. code-block:: DTS
+.. code-block:: devicetree
 
    foo: foo@1234 {
            a = <1000 2000 3000>; /* array */
@@ -373,7 +379,7 @@ generated C header which is put into every application build directory:
 :ref:`devicetree_unfixed.h <dt-outputs>`. This file contains macros with
 devicetree data.
 
-These macros have tricky naming conventions which the `devicetree_api` API
+These macros have tricky naming conventions which the :ref:`devicetree_api` API
 abstracts away. They should be considered an implementation detail, but it's
 useful to understand them since they will frequently be seen in compiler error
 messages.

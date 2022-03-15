@@ -83,6 +83,8 @@ static int iwdg_stm32_setup(const struct device *dev, uint8_t options)
 	if (options & WDT_OPT_PAUSE_HALTED_BY_DBG) {
 #if defined(CONFIG_SOC_SERIES_STM32F0X)
 		LL_APB1_GRP2_EnableClock(LL_APB1_GRP2_PERIPH_DBGMCU);
+#elif defined(CONFIG_SOC_SERIES_STM32G0X)
+		LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_DBGMCU);
 #elif defined(CONFIG_SOC_SERIES_STM32L0X)
 		LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_DBGMCU);
 #endif
@@ -196,7 +198,7 @@ static struct iwdg_stm32_data iwdg_stm32_dev_data = {
 	.Instance = (IWDG_TypeDef *)DT_INST_REG_ADDR(0)
 };
 
-DEVICE_DT_INST_DEFINE(0, iwdg_stm32_init, device_pm_control_nop,
+DEVICE_DT_INST_DEFINE(0, iwdg_stm32_init, NULL,
 		    &iwdg_stm32_dev_data, NULL,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &iwdg_stm32_api);

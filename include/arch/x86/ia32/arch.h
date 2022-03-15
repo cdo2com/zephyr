@@ -28,7 +28,7 @@
 
 #include <arch/common/addr_types.h>
 #include <arch/x86/ia32/segmentation.h>
-#include <power/power.h>
+#include <pm/pm.h>
 
 #endif /* _ASMLANGUAGE */
 
@@ -115,9 +115,6 @@ typedef struct s_isrList {
  * @param p IRQ priority
  * @param v Interrupt Vector
  * @param d Descriptor Privilege Level
- *
- * @return N/A
- *
  */
 
 #define NANO_CPU_INT_REGISTER(r, n, p, v, d) \
@@ -173,6 +170,12 @@ typedef struct s_isrList {
  */
 #define _VECTOR_ARG(irq_p)	(-1)
 
+#ifdef CONFIG_LINKER_USE_PINNED_SECTION
+#define IRQSTUBS_TEXT_SECTION	".pinned_text.irqstubs"
+#else
+#define IRQSTUBS_TEXT_SECTION	".text.irqstubs"
+#endif
+
 /* Internally this function does a few things:
  *
  * 1. There is a declaration of the interrupt parameters in the .intList
@@ -202,7 +205,7 @@ typedef struct s_isrList {
 		".long 0\n\t"			/* ISR_LIST.dpl */ \
 		".long 0\n\t"			/* ISR_LIST.tss */ \
 		".popsection\n\t" \
-		".pushsection .text.irqstubs\n\t" \
+		".pushsection " IRQSTUBS_TEXT_SECTION "\n\t" \
 		".global %c[isr]_irq%c[irq]_stub\n\t" \
 		"%c[isr]_irq%c[irq]_stub:\n\t" \
 		"pushl %[isr_param]\n\t" \
@@ -218,6 +221,14 @@ typedef struct s_isrList {
 	z_irq_controller_irq_config(Z_IRQ_TO_INTERRUPT_VECTOR(irq_p), (irq_p), \
 				   (flags_p)); \
 }
+
+#ifdef CONFIG_PCIE
+
+#define ARCH_PCIE_IRQ_CONNECT(bdf_p, irq_p, priority_p,			\
+			      isr_p, isr_param_p, flags_p)		\
+	ARCH_IRQ_CONNECT(irq_p, priority_p, isr_p, isr_param_p, flags_p)
+
+#endif /* CONFIG_PCIE */
 
 /* Direct interrupts won't work as expected with KPTI turned on, because
  * all non-user accessible pages in the page table are marked non-present.
@@ -238,10 +249,8 @@ typedef struct s_isrList {
 static inline void arch_irq_direct_pm(void)
 {
 	if (_kernel.idle) {
-		int32_t idle_val = _kernel.idle;
-
 		_kernel.idle = 0;
-		z_pm_save_idle_exit(idle_val);
+		z_pm_save_idle_exit();
 	}
 }
 
@@ -423,13 +432,13 @@ extern struct task_state_segment _main_tss;
  */
 #if defined(CONFIG_EAGER_FPU_SHARING) || defined(CONFIG_LAZY_FPU_SHARING)
 #ifdef CONFIG_SSE
-#define ARCH_DYMANIC_OBJ_K_THREAD_ALIGNMENT	16
+#define ARCH_DYNAMIC_OBJ_K_THREAD_ALIGNMENT	16
 #else
-#define ARCH_DYMANIC_OBJ_K_THREAD_ALIGNMENT	(sizeof(void *))
+#define ARCH_DYNAMIC_OBJ_K_THREAD_ALIGNMENT	(sizeof(void *))
 #endif
 #else
 /* No special alignment requirements, simply align on pointer size. */
-#define ARCH_DYMANIC_OBJ_K_THREAD_ALIGNMENT	(sizeof(void *))
+#define ARCH_DYNAMIC_OBJ_K_THREAD_ALIGNMENT	(sizeof(void *))
 #endif /* CONFIG_*_FP_SHARING */
 
 

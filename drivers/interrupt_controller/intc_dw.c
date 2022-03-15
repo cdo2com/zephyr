@@ -52,11 +52,11 @@ static void dw_ictl_isr(const struct device *dev)
 	volatile struct dw_ictl_registers * const regs =
 			(struct dw_ictl_registers *)config->base_addr;
 
-	dw_ictl_dispatch_child_isrs(regs->irq_maskstatus_l,
+	dw_ictl_dispatch_child_isrs(regs->irq_finalstatus_l,
 				    config->isr_table_offset);
 
 	if (config->numirqs > 32) {
-		dw_ictl_dispatch_child_isrs(regs->irq_maskstatus_h,
+		dw_ictl_dispatch_child_isrs(regs->irq_finalstatus_h,
 					    config->isr_table_offset + 32);
 	}
 }
@@ -143,7 +143,7 @@ static const struct irq_next_level_api dw_ictl_apis = {
 	.intr_get_line_state = dw_ictl_intr_get_line_state,
 };
 
-DEVICE_DT_INST_DEFINE(0, dw_ictl_initialize, device_pm_control_nop,
+DEVICE_DT_INST_DEFINE(0, dw_ictl_initialize, NULL,
 		NULL, &dw_config, PRE_KERNEL_1,
 		CONFIG_DW_ICTL_INIT_PRIORITY, &dw_ictl_apis);
 

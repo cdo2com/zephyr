@@ -75,7 +75,7 @@ int z_shell_log_backend_output_func(uint8_t *data, size_t length, void *ctx);
 	LOG_OUTPUT_DEFINE(_name##_log_output, z_shell_log_backend_output_func,\
 			  _buf, _size); \
 	static struct shell_log_backend_control_block _name##_control_block; \
-	static uint32_t _name##_buf[128]; \
+	static uint32_t __aligned(Z_LOG_MSG2_ALIGNMENT) _name##_buf[128]; \
 	const struct mpsc_pbuf_buffer_config _name##_mpsc_buffer_config = { \
 		.buf = _name##_buf, \
 		.size = ARRAY_SIZE(_name##_buf), \
@@ -91,9 +91,9 @@ int z_shell_log_backend_output_func(uint8_t *data, size_t length, void *ctx);
 		.log_output = &_name##_log_output, \
 		.control_block = &_name##_control_block, \
 		.timeout = _timeout, \
-		.mpsc_buffer_config = IS_ENABLED(CONFIG_LOG2_MODE_DEFERRED) ? \
+		.mpsc_buffer_config = IS_ENABLED(CONFIG_LOG2_DEFERRED) ? \
 			&_name##_mpsc_buffer_config : NULL, \
-		.mpsc_buffer = IS_ENABLED(CONFIG_LOG2_MODE_DEFERRED) ? \
+		.mpsc_buffer = IS_ENABLED(CONFIG_LOG2_DEFERRED) ? \
 			&_name##_mpsc_buffer : NULL, \
 	}
 

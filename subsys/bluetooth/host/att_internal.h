@@ -11,11 +11,7 @@
 #define BT_ATT_TIMEOUT		K_SECONDS(30)
 
 /* ATT MTU must be equal for RX and TX, so select the smallest value */
-#if CONFIG_BT_L2CAP_RX_MTU < CONFIG_BT_L2CAP_TX_MTU
-#define BT_ATT_MTU CONFIG_BT_L2CAP_RX_MTU
-#else
-#define BT_ATT_MTU CONFIG_BT_L2CAP_TX_MTU
-#endif
+#define BT_ATT_MTU (MIN(BT_L2CAP_RX_MTU, BT_L2CAP_TX_MTU))
 
 struct bt_att_hdr {
 	uint8_t  code;
@@ -308,3 +304,10 @@ int bt_eatt_connect(struct bt_conn *conn, uint8_t num_channels);
 
 /* Disconnect EATT channels */
 int bt_eatt_disconnect(struct bt_conn *conn);
+
+/** @brief Find a pending ATT request by its user_data pointer.
+ *  @param conn The connection the request was issued on.
+ *  @param user_data The pointer value to look for.
+ *  @return The found request. NULL if not found.
+ */
+struct bt_att_req *bt_att_find_req_by_user_data(struct bt_conn *conn, const void *user_data);

@@ -251,15 +251,19 @@ def string_create_helper(region, memory_type,
         else:
             if memory_type != 'SRAM' and region == 'rodata':
                 align_size = 0
-                if memory_type in mpu_align.keys():
+                if memory_type in mpu_align:
                     align_size = mpu_align[memory_type]
 
                 linker_string += LINKER_SECTION_SEQ_MPU.format(memory_type.lower(), region, memory_type.upper(),
                                                                region.upper(), tmp, load_address_string, align_size)
             else:
-                linker_string += LINKER_SECTION_SEQ.format(memory_type.lower(), region, memory_type.upper(),
-                                                           region.upper(), tmp, load_address_string)
-
+                if memory_type == 'SRAM' and region == 'text':
+                    align_size = 0
+                    linker_string += LINKER_SECTION_SEQ_MPU.format(memory_type.lower(), region, memory_type.upper(),
+                                                                   region.upper(), tmp, load_address_string, align_size)
+                else:
+                    linker_string += LINKER_SECTION_SEQ.format(memory_type.lower(), region, memory_type.upper(),
+                                                               region.upper(), tmp, load_address_string)
             if load_address_in_flash:
                 linker_string += SECTION_LOAD_MEMORY_SEQ.format(memory_type.lower(), region, memory_type.upper(),
                                                                 region.upper())
@@ -289,13 +293,13 @@ def generate_linker_script(linker_file, sram_data_linker_file, sram_bss_linker_f
             gen_string += string_create_helper("bss", memory_type, full_list_of_sections, 0)
 
     # finally writing to the linker file
-    with open(linker_file, "a+") as file_desc:
+    with open(linker_file, "w") as file_desc:
         file_desc.write(gen_string)
 
-    with open(sram_data_linker_file, "a+") as file_desc:
+    with open(sram_data_linker_file, "w") as file_desc:
         file_desc.write(gen_string_sram_data)
 
-    with open(sram_bss_linker_file, "a+") as file_desc:
+    with open(sram_bss_linker_file, "w") as file_desc:
         file_desc.write(gen_string_sram_bss)
 
 
@@ -395,6 +399,9 @@ def create_dict_wrt_mem():
     if args.input_rel_dict == '':
         sys.exit("Disable CONFIG_CODE_DATA_RELOCATION if no file needs relocation")
     for line in args.input_rel_dict.split(';'):
+        if ':' not in line:
+            continue
+
         mem_region, file_name = line.split(':', 1)
 
         file_name_list = glob.glob(file_name)

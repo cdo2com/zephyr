@@ -73,7 +73,6 @@ extern void test_mutex_multithread_competition(void);
  *
  * thread_05 -
  *
- * @return  N/A
  */
 
 void thread_05(void)
@@ -96,7 +95,6 @@ void thread_05(void)
  *
  * thread_06 -
  *
- * @return  N/A
  */
 
 void thread_06(void)
@@ -128,7 +126,6 @@ void thread_06(void)
  *
  * thread_07 -
  *
- * @return  N/A
  */
 
 void thread_07(void)
@@ -158,7 +155,6 @@ void thread_07(void)
  *
  * thread_08 -
  *
- * @return  N/A
  */
 
 void thread_08(void)
@@ -182,7 +178,6 @@ void thread_08(void)
  *
  * thread_09 -
  *
- * @return  N/A
  */
 
 void thread_09(void)
@@ -215,7 +210,6 @@ void thread_09(void)
  *
  * thread_11 -
  *
- * @return N/A
  */
 
 void thread_11(void)
@@ -243,7 +237,6 @@ extern void thread_12(void);
  * This thread will lock on mutex_1, mutex_2, mutex_3 and mutex_4. It later
  * recursively locks private_mutex, releases it, then re-locks it.
  *
- * @return  N/A
  */
 
 void test_mutex(void)
@@ -438,14 +431,14 @@ void test_main(void)
 	 */
 #ifdef CONFIG_USERSPACE
 	ztest_test_suite(mutex_complex,
-			 ztest_1cpu_user_unit_test(test_mutex),
+			 ztest_user_unit_test(test_mutex),
 			 ztest_user_unit_test(test_user_access),
 			 ztest_unit_test(test_supervisor_access));
 
 	ztest_run_test_suite(mutex_complex);
 #else
 	ztest_test_suite(mutex_complex,
-			 ztest_1cpu_unit_test(test_mutex),
+			 ztest_unit_test(test_mutex),
 			 ztest_unit_test(test_user_access),
 			 ztest_unit_test(test_supervisor_access),
 			 ztest_unit_test(test_mutex_multithread_competition));

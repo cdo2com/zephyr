@@ -58,6 +58,7 @@
 #include <toolchain.h>
 #include <linker/sections.h>
 #include <device.h>
+#include <pm/device.h>
 #include <string.h>
 
 #include <drivers/interrupt_controller/ioapic.h> /* public API declarations */
@@ -85,10 +86,10 @@ DEVICE_MMIO_TOPLEVEL_STATIC(ioapic_regs, DT_DRV_INST(0));
  */
 #define DEFAULT_RTE_DEST	(0xFF << 24)
 
-static uint32_t ioapic_rtes;
+static __pinned_bss uint32_t ioapic_rtes;
 
 #ifdef CONFIG_PM_DEVICE
-#include <power/power.h>
+#include <pm/device.h>
 
 #define BITS_PER_IRQ  4
 #define IOAPIC_BITFIELD_HI_LO	0
@@ -103,9 +104,8 @@ static uint32_t ioapic_rtes;
  */
 #define SUSPEND_BITS_REQD (ROUND_UP((256 * BITS_PER_IRQ), 32))
 
+__pinned_bss
 uint32_t ioapic_suspend_buf[SUSPEND_BITS_REQD / 32] = {0};
-static uint32_t ioapic_device_power_state = DEVICE_PM_ACTIVE_STATE;
-
 #endif
 
 static uint32_t __IoApicGet(int32_t offset);
@@ -116,6 +116,36 @@ static uint32_t ioApicRedGetLo(unsigned int irq);
 static void IoApicRedUpdateLo(unsigned int irq, uint32_t value,
 					uint32_t mask);
 
+#if defined(CONFIG_INTEL_VTD_ICTL) &&				\
+	!defined(CONFIG_INTEL_VTD_ICTL_XAPIC_PASSTHROUGH)
+
+#include <drivers/interrupt_controller/intel_vtd.h>
+#include <arch/x86/acpi.h>
+
+static const struct device *vtd;
+static uint16_t ioapic_id;
+
+
+static bool get_vtd(void)
+{
+	if (vtd != NULL) {
+		return true;
+	}
+
+#define DRV_COMPAT_BAK DT_DRV_COMPAT
+#undef DT_DRV_COMPAT
+#define DT_DRV_COMPAT intel_vt_d
+	vtd = device_get_binding(DT_INST_LABEL(0));
+#undef DT_DRV_COMPAT
+#define DT_DRV_COMPAT DRV_COMPAT_BAK
+#undef DRV_COMPAT_BAK
+
+	ioapic_id = z_acpi_get_dev_id_from_dmar(ACPI_DRHD_DEV_SCOPE_IOAPIC);
+
+	return vtd == NULL ? false : true;
+}
+#endif /* CONFIG_INTEL_VTD_ICTL && !INTEL_VTD_ICTL_XAPIC_PASSTHROUGH */
+
 /*
  * The functions irq_enable() and irq_disable() are implemented in the
  * interrupt controller driver due to the IRQ virtualization imposed by
@@ -123,13 +153,13 @@ static void IoApicRedUpdateLo(unsigned int irq, uint32_t value,
  */
 
 /**
- *
  * @brief Initialize the IO APIC or xAPIC
  *
  * This routine initializes the IO APIC or xAPIC.
  *
- * @return N/A
+ * @retval 0 on success.
  */
+__boot_func
 int ioapic_init(const struct device *unused)
 {
 	ARG_UNUSED(unused);
@@ -155,34 +185,32 @@ int ioapic_init(const struct device *unused)
 	return 0;
 }
 
+__pinned_func
 uint32_t z_ioapic_num_rtes(void)
 {
 	return ioapic_rtes;
 }
 
 /**
- *
  * @brief Enable a specified APIC interrupt input line
  *
  * This routine enables a specified APIC interrupt input line.
- * @param irq IRQ number to enable
  *
- * @return N/A
+ * @param irq IRQ number to enable
  */
+__pinned_func
 void z_ioapic_irq_enable(unsigned int irq)
 {
 	IoApicRedUpdateLo(irq, 0, IOAPIC_INT_MASK);
 }
 
 /**
- *
  * @brief Disable a specified APIC interrupt input line
  *
  * This routine disables a specified APIC interrupt input line.
  * @param irq IRQ number to disable
- *
- * @return N/A
  */
+__pinned_func
 void z_ioapic_irq_disable(unsigned int irq)
 {
 	IoApicRedUpdateLo(irq, IOAPIC_INT_MASK, IOAPIC_INT_MASK);
@@ -191,6 +219,7 @@ void z_ioapic_irq_disable(unsigned int irq)
 
 #ifdef CONFIG_PM_DEVICE
 
+__pinned_func
 void store_flags(unsigned int irq, uint32_t flags)
 {
 	/* Currently only the following four flags are modified */
@@ -219,6 +248,7 @@ void store_flags(unsigned int irq, uint32_t flags)
 	}
 }
 
+__pinned_func
 uint32_t restore_flags(unsigned int irq)
 {
 	uint32_t flags = 0U;
@@ -247,6 +277,7 @@ uint32_t restore_flags(unsigned int irq)
 }
 
 
+__pinned_func
 int ioapic_suspend(const struct device *port)
 {
 	int irq;
@@ -265,10 +296,10 @@ int ioapic_suspend(const struct device *port)
 			store_flags(irq, rte_lo);
 		}
 	}
-	ioapic_device_power_state = DEVICE_PM_SUSPEND_STATE;
 	return 0;
 }
 
+__pinned_func
 int ioapic_resume_from_suspend(const struct device *port)
 {
 	int irq;
@@ -295,7 +326,6 @@ int ioapic_resume_from_suspend(const struct device *port)
 		ioApicRedSetHi(irq, DEFAULT_RTE_DEST);
 		ioApicRedSetLo(irq, rteValue);
 	}
-	ioapic_device_power_state = DEVICE_PM_ACTIVE_STATE;
 	return 0;
 }
 
@@ -303,56 +333,86 @@ int ioapic_resume_from_suspend(const struct device *port)
 * Implements the driver control management functionality
 * the *context may include IN data or/and OUT data
 */
-static int ioapic_device_ctrl(const struct device *dev,
-			      uint32_t ctrl_command,
-			      void *context, device_pm_cb cb, void *arg)
+__pinned_func
+static int ioapic_pm_action(const struct device *dev,
+			    enum pm_device_action action)
 {
 	int ret = 0;
 
-	if (ctrl_command == DEVICE_PM_SET_POWER_STATE) {
-		if (*((uint32_t *)context) == DEVICE_PM_SUSPEND_STATE) {
-			ret = ioapic_suspend(dev);
-		} else if (*((uint32_t *)context) == DEVICE_PM_ACTIVE_STATE) {
-			ret = ioapic_resume_from_suspend(dev);
-		}
-	} else if (ctrl_command == DEVICE_PM_GET_POWER_STATE) {
-		*((uint32_t *)context) = ioapic_device_power_state;
-	}
-
-	if (cb) {
-		cb(dev, ret, context, arg);
+	switch (action) {
+	case PM_DEVICE_ACTION_RESUME:
+		ret = ioapic_resume_from_suspend(dev);
+		break;
+	case PM_DEVICE_ACTION_SUSPEND:
+		ret = ioapic_suspend(dev);
+		break;
+	default:
+		ret = -ENOTSUP;
 	}
 
 	return ret;
 }
 
-
 #endif  /*CONFIG_PM_DEVICE*/
 
 /**
- *
  * @brief Programs the interrupt redirection table
  *
  * This routine sets up the redirection table entry for the specified IRQ
  * @param irq Virtualized IRQ
  * @param vector Vector number
  * @param flags Interrupt flags
- *
- * @return N/A
  */
+__boot_func
 void z_ioapic_irq_set(unsigned int irq, unsigned int vector, uint32_t flags)
 {
 	uint32_t rteValue;   /* value to copy into redirection table entry */
+#if defined(CONFIG_INTEL_VTD_ICTL) &&				\
+	!defined(CONFIG_INTEL_VTD_ICTL_XAPIC_PASSTHROUGH)
+	int irte_idx;
 
-	/* the delivery mode is determined by the flags passed from drivers */
-	rteValue = IOAPIC_INT_MASK | IOAPIC_LOGICAL |
-		   (vector & IOAPIC_VEC_MASK) | flags;
-	ioApicRedSetHi(irq, DEFAULT_RTE_DEST);
-	ioApicRedSetLo(irq, rteValue);
+	if (!get_vtd()) {
+		goto no_vtd;
+	}
+
+	irte_idx = vtd_get_irte_by_vector(vtd, vector);
+	if (irte_idx < 0) {
+		irte_idx = vtd_get_irte_by_irq(vtd, irq);
+	}
+
+	if (irte_idx >= 0 && !vtd_irte_is_msi(vtd, irte_idx)) {
+		/* Enable interrupt remapping format and set the irte index */
+		rteValue = IOAPIC_VTD_REMAP_FORMAT |
+			IOAPIC_VTD_INDEX(irte_idx);
+		ioApicRedSetHi(irq, rteValue);
+
+		/* Remapped: delivery mode is Fixed (000) and
+		 * destination mode is no longer present as it is replaced by
+		 * the 15th bit of irte index, which is always 0 in our case.
+		 */
+		rteValue = IOAPIC_INT_MASK |
+			(vector & IOAPIC_VEC_MASK) |
+			(flags & IOAPIC_TRIGGER_MASK) |
+			(flags & IOAPIC_POLARITY_MASK);
+		ioApicRedSetLo(irq, rteValue);
+
+		vtd_remap(vtd, irte_idx, vector, flags, ioapic_id);
+	} else {
+no_vtd:
+#else
+	{
+#endif /* CONFIG_INTEL_VTD_ICTL && !CONFIG_INTEL_VTD_ICTL_XAPIC_PASSTHROUGH */
+		/* the delivery mode is determined by the flags
+		 * passed from drivers
+		 */
+		rteValue = IOAPIC_INT_MASK | IOAPIC_LOGICAL |
+			(vector & IOAPIC_VEC_MASK) | flags;
+		ioApicRedSetHi(irq, DEFAULT_RTE_DEST);
+		ioApicRedSetLo(irq, rteValue);
+	}
 }
 
 /**
- *
  * @brief Program interrupt vector for specified irq
  *
  * The routine writes the interrupt vector in the Interrupt Redirection
@@ -360,15 +420,14 @@ void z_ioapic_irq_set(unsigned int irq, unsigned int vector, uint32_t flags)
  *
  * @param irq Interrupt number
  * @param vector Vector number
- * @return N/A
  */
+__boot_func
 void z_ioapic_int_vec_set(unsigned int irq, unsigned int vector)
 {
 	IoApicRedUpdateLo(irq, vector, IOAPIC_VEC_MASK);
 }
 
 /**
- *
  * @brief Read a 32 bit IO APIC register
  *
  * This routine reads the specified IO APIC register using indirect addressing.
@@ -376,6 +435,7 @@ void z_ioapic_int_vec_set(unsigned int irq, unsigned int vector)
  *
  * @return register value
  */
+__pinned_func
 static uint32_t __IoApicGet(int32_t offset)
 {
 	uint32_t value; /* value */
@@ -394,15 +454,14 @@ static uint32_t __IoApicGet(int32_t offset)
 }
 
 /**
- *
  * @brief Write a 32 bit IO APIC register
  *
  * This routine writes the specified IO APIC register using indirect addressing.
  *
  * @param offset Register offset (8 bits)
  * @param value Value to set the register
- * @return N/A
  */
+__pinned_func
 static void __IoApicSet(int32_t offset, uint32_t value)
 {
 	unsigned int key; /* interrupt lock level */
@@ -418,7 +477,6 @@ static void __IoApicSet(int32_t offset, uint32_t value)
 }
 
 /**
- *
  * @brief Get low 32 bits of Redirection Table entry
  *
  * This routine reads the low-order 32 bits of a Redirection Table entry.
@@ -426,6 +484,7 @@ static void __IoApicSet(int32_t offset, uint32_t value)
  * @param irq INTIN number
  * @return 32 low-order bits
  */
+__pinned_func
 static uint32_t ioApicRedGetLo(unsigned int irq)
 {
 	int32_t offset = IOAPIC_REDTBL + (irq << 1); /* register offset */
@@ -434,15 +493,14 @@ static uint32_t ioApicRedGetLo(unsigned int irq)
 }
 
 /**
- *
  * @brief Set low 32 bits of Redirection Table entry
  *
  * This routine writes the low-order 32 bits of a Redirection Table entry.
  *
  * @param irq INTIN number
  * @param lower32 Value to be written
- * @return N/A
  */
+__pinned_func
 static void ioApicRedSetLo(unsigned int irq, uint32_t lower32)
 {
 	int32_t offset = IOAPIC_REDTBL + (irq << 1); /* register offset */
@@ -451,15 +509,14 @@ static void ioApicRedSetLo(unsigned int irq, uint32_t lower32)
 }
 
 /**
- *
  * @brief Set high 32 bits of Redirection Table entry
  *
  * This routine writes the high-order 32 bits of a Redirection Table entry.
  *
  * @param irq INTIN number
  * @param upper32 Value to be written
- * @return N/A
  */
+__pinned_func
 static void ioApicRedSetHi(unsigned int irq, uint32_t upper32)
 {
 	int32_t offset = IOAPIC_REDTBL + (irq << 1) + 1; /* register offset */
@@ -468,7 +525,6 @@ static void ioApicRedSetHi(unsigned int irq, uint32_t upper32)
 }
 
 /**
- *
  * @brief Modify low 32 bits of Redirection Table entry
  *
  * This routine modifies selected portions of the low-order 32 bits of a
@@ -477,8 +533,8 @@ static void ioApicRedSetHi(unsigned int irq, uint32_t upper32)
  * @param irq INTIN number
  * @param value Value to be written
  * @param mask  Mask of bits to be modified
- * @return N/A
  */
+__pinned_func
 static void IoApicRedUpdateLo(unsigned int irq,
 				uint32_t value,
 				uint32_t mask)
@@ -486,10 +542,7 @@ static void IoApicRedUpdateLo(unsigned int irq,
 	ioApicRedSetLo(irq, (ioApicRedGetLo(irq) & ~mask) | (value & mask));
 }
 
+PM_DEVICE_DEFINE(ioapic, ioapic_pm_action);
 
-#ifdef CONFIG_PM_DEVICE
-SYS_DEVICE_DEFINE("ioapic", ioapic_init, ioapic_device_ctrl, PRE_KERNEL_1,
-		  CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
-#else
-SYS_INIT(ioapic_init, PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
-#endif
+DEVICE_DEFINE(ioapic, "ioapic", ioapic_init, PM_DEVICE_GET(ioapic), NULL, NULL,
+	      PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, NULL);

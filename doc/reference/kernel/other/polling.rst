@@ -123,11 +123,10 @@ amount of time, or the special values :c:macro:`K_NO_WAIT` and
 :c:macro:`K_FOREVER` to either not wait or wait until an event condition is
 satisfied and not sooner.
 
-Only one thread can poll on a semaphore or a FIFO at a time. If a second thread
-tries to poll on the same semaphore or FIFO, :c:func:`k_poll` immediately
-returns with the return value -:c:macro:`EADDRINUSE`. In that case, if other
-conditions passed to :c:func:`k_poll` were met, their state will be set in
-the corresponding poll event.
+A list of pollers is offered on each semaphore or FIFO and as many events
+can wait in it as the app wants.
+Notice that the waiters will be served in first-come-first-serve order,
+not in priority order.
 
 In case of success, :c:func:`k_poll` returns 0. If it times out, it returns
 -:c:macro:`EAGAIN`.
@@ -256,6 +255,18 @@ If the signal is to be polled in a loop, *both* its event state and its
         }
     }
 
+Note that poll signals are not internally synchronized.  A k_poll call
+that is passed a signal will return after any code in the system calls
+:c:func:`k_poll_signal_raise()`.  But if the signal is being
+externally managed and reset via :c:func:`k_poll_signal_init()`, it is
+possible that by the time the application checks, the event state may
+no longer be equal to :c:macro:`K_POLL_STATE_SIGNALED`, and a (naive)
+application will miss events.  Best practice is always to reset the
+signal only from within the thread invoking the k_poll() loop, or else
+to use some other event type which tracks event counts: semaphores and
+FIFOs more more error-proof in thise sense because they can't "miss"
+events, architecturally.
+
 Suggested Uses
 **************
 
@@ -278,10 +289,9 @@ Configuration Options
 
 Related configuration options:
 
-* :option:`CONFIG_POLL`
+* :kconfig:`CONFIG_POLL`
 
 API Reference
 *************
 
 .. doxygengroup:: poll_apis
-   :project: Zephyr

@@ -12,6 +12,7 @@
 #include <bluetooth/hci.h>
 #include <drivers/bluetooth/hci_driver.h>
 #include "bluetooth/addr.h"
+#include <drivers/clock_control/stm32_clock_control.h>
 
 #include "app_conf.h"
 #include "stm32_wpan_common.h"
@@ -95,7 +96,7 @@ static void stm32wb_start_ble(void)
 	    CFG_BLE_MAX_CONN_EVENT_LENGTH,
 	    CFG_BLE_HSE_STARTUP_TIME,
 	    CFG_BLE_VITERBI_MODE,
-	    CFG_BLE_LL_ONLY,
+	    CFG_BLE_OPTIONS,
 	    0 }
 	};
 
@@ -159,6 +160,8 @@ static void bt_ipm_rx_thread(void)
 		struct bt_hci_acl_hdr acl_hdr;
 		TL_AclDataSerial_t *acl;
 		struct bt_hci_evt_le_meta_event *mev;
+		size_t buf_tailroom;
+		size_t buf_add_len;
 
 		hcievt = k_fifo_get(&ipm_rx_events_fifo, K_FOREVER);
 
@@ -178,8 +181,7 @@ static void bt_ipm_rx_thread(void)
 			default:
 				mev = (void *)&hcievt->evtserial.evt.payload;
 				if (hcievt->evtserial.evt.evtcode == BT_HCI_EVT_LE_META_EVENT &&
-				    (mev->subevent == BT_HCI_EVT_LE_ADVERTISING_REPORT ||
-				     mev->subevent == BT_HCI_EVT_LE_EXT_ADVERTISING_REPORT)) {
+				    (mev->subevent == BT_HCI_EVT_LE_ADVERTISING_REPORT)) {
 					discardable = true;
 					timeout = K_NO_WAIT;
 				}
@@ -194,8 +196,18 @@ static void bt_ipm_rx_thread(void)
 			}
 
 			tryfix_event(&hcievt->evtserial.evt);
+
+			buf_tailroom = net_buf_tailroom(buf);
+			buf_add_len = hcievt->evtserial.evt.plen + 2;
+			if (buf_tailroom < buf_add_len) {
+				BT_ERR("Not enough space in buffer %zu/%zu",
+				       buf_add_len, buf_tailroom);
+				net_buf_unref(buf);
+				goto end_loop;
+			}
+
 			net_buf_add_mem(buf, &hcievt->evtserial.evt,
-					hcievt->evtserial.evt.plen + 2);
+					buf_add_len);
 			break;
 		case HCI_ACL:
 			acl = &(((TL_AclDataPacket_t *)hcievt)->AclDataSerial);
@@ -205,8 +217,18 @@ static void bt_ipm_rx_thread(void)
 			BT_DBG("ACL: handle %x, len %x",
 			       acl_hdr.handle, acl_hdr.len);
 			net_buf_add_mem(buf, &acl_hdr, sizeof(acl_hdr));
+
+			buf_tailroom = net_buf_tailroom(buf);
+			buf_add_len = acl_hdr.len;
+			if (buf_tailroom < buf_add_len) {
+				BT_ERR("Not enough space in buffer %zu/%zu",
+				       buf_add_len, buf_tailroom);
+				net_buf_unref(buf);
+				goto end_loop;
+			}
+
 			net_buf_add_mem(buf, (uint8_t *)&acl->acl_data,
-					acl_hdr.len);
+					buf_add_len);
 			break;
 		default:
 			BT_ERR("Unknown BT buf type %d",
@@ -371,7 +393,7 @@ static void start_ble_rf(void)
 		LL_RCC_ReleaseBackupDomainReset();
 	}
 
-#ifdef CONFIG_CLOCK_STM32_LSE
+#if STM32_LSE_CLOCK
 	/* Select LSE clock */
 	LL_RCC_LSE_Enable();
 	while (!LL_RCC_LSE_IsReady()) {

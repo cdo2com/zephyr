@@ -10,9 +10,8 @@
  */
 
 #include <logging/log_msg2.h>
-#include <logging/log_core.h>
+#include <logging/log_internal.h>
 #include <logging/log_ctrl.h>
-#include <logging/log_instance.h>
 
 #include <tc_util.h>
 #include <stdbool.h>
@@ -20,7 +19,7 @@
 #include <ztest.h>
 #include <sys/cbprintf.h>
 
-#if defined(__sparc__) || defined(CONFIG_ARCH_POSIX)
+#if defined(CONFIG_ARCH_POSIX)
 /* On some platforms all strings are considered RW, that impacts size of the
  * package.
  */
@@ -29,7 +28,7 @@
 #define TEST_LOG_MSG2_RW_STRINGS 0
 #endif
 
-#if CONFIG_NO_OPTIMIZATIONS && CONFIG_ARM
+#if CONFIG_NO_OPTIMIZATIONS
 #define EXP_MODE(name) Z_LOG_MSG2_MODE_RUNTIME
 #else
 #define EXP_MODE(name) Z_LOG_MSG2_MODE_##name
@@ -108,8 +107,8 @@ static void basic_validate(struct log_msg2 *msg,
 	d = log_msg2_get_package(msg, &len);
 	if (str) {
 		rv = cbpprintf(out, &tbuf, d);
-		buf[rv] = '\0';
 		zassert_true(rv > 0, NULL);
+		buf[rv] = '\0';
 
 		rv = strncmp(buf, str, sizeof(buf));
 		zassert_equal(rv, 0, "expected:\n%s,\ngot:\n%s", str, buf);
@@ -308,8 +307,8 @@ void test_log_msg2_fp(void)
 	static const uint8_t level = 2;
 	const void *source = (const void *)123;
 	int mode;
-	long long lli;
-	float f = 1.234;
+	long long lli = 0x1122334455;
+	float f = 1.234f;
 	double d = 11.3434;
 	char str[256];
 	int i = -100;
@@ -317,16 +316,16 @@ void test_log_msg2_fp(void)
 	test_init();
 
 	Z_LOG_MSG2_CREATE2(1, mode, 0, domain, source, level, NULL, 0,
-			TEST_MSG, i, lli, f, str, d, source);
+			TEST_MSG, i, lli, (double)f, &i, d, source);
 	zassert_equal(mode, EXP_MODE(ZERO_COPY), NULL);
 
 	Z_LOG_MSG2_CREATE2(0, mode, 0, domain, source, level, NULL, 0,
-			TEST_MSG, i, lli, f, str, d, source);
+			TEST_MSG, i, lli, (double)f, &i, d, source);
 	zassert_equal(mode, EXP_MODE(FROM_STACK), NULL);
 
 	z_log_msg2_runtime_create(domain, (void *)source, level, NULL, 0,
-				  TEST_MSG, i, lli, f, str, d, source);
-	snprintfcb(str, sizeof(str), TEST_MSG, i, lli, f, str, d, source);
+				  TEST_MSG, i, lli, (double)f, &i, d, source);
+	snprintfcb(str, sizeof(str), TEST_MSG, i, lli, (double)f, &i, d, source);
 
 	validate_base_message_set(source, domain, level,
 				   TEST_TIMESTAMP_INIT_VALUE,

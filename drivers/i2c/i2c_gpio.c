@@ -128,8 +128,8 @@ static int i2c_gpio_init(const struct device *dev)
 		return -EINVAL;
 	}
 
-	err = gpio_config(context->scl_gpio, config->scl_pin,
-			  config->scl_flags | GPIO_OUTPUT_HIGH);
+	err = gpio_pin_configure(context->scl_gpio, config->scl_pin,
+				 config->scl_flags | GPIO_OUTPUT_HIGH);
 	if (err) {
 		LOG_ERR("failed to configure SCL GPIO pin (err %d)", err);
 		return err;
@@ -137,15 +137,15 @@ static int i2c_gpio_init(const struct device *dev)
 
 	context->sda_gpio = device_get_binding(config->sda_gpio_name);
 	if (!context->sda_gpio) {
-		LOG_ERR("failed to get SCL GPIO device");
+		LOG_ERR("failed to get SDA GPIO device");
 		return -EINVAL;
 	}
 
-	err = gpio_config(context->sda_gpio, config->sda_pin,
-			  config->sda_flags | GPIO_INPUT | GPIO_OUTPUT_HIGH);
+	err = gpio_pin_configure(context->sda_gpio, config->sda_pin,
+				 config->sda_flags | GPIO_INPUT | GPIO_OUTPUT_HIGH);
 	if (err == -ENOTSUP) {
-		err = gpio_config(context->sda_gpio, config->sda_pin,
-				  config->sda_flags | GPIO_OUTPUT_HIGH);
+		err = gpio_pin_configure(context->sda_gpio, config->sda_pin,
+					 config->sda_flags | GPIO_OUTPUT_HIGH);
 	}
 	if (err) {
 		LOG_ERR("failed to configure SDA GPIO pin (err %d)", err);
@@ -182,9 +182,9 @@ static const struct i2c_gpio_config i2c_gpio_dev_cfg_##_num = {		\
 	.bitrate	= DT_INST_PROP(_num, clock_frequency),		\
 };									\
 									\
-DEVICE_DT_INST_DEFINE(_num,						\
+I2C_DEVICE_DT_INST_DEFINE(_num,						\
 	    i2c_gpio_init,						\
-	    device_pm_control_nop,					\
+	    NULL,							\
 	    &i2c_gpio_dev_data_##_num,					\
 	    &i2c_gpio_dev_cfg_##_num,					\
 	    POST_KERNEL, CONFIG_I2C_INIT_PRIORITY, &api);

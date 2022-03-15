@@ -17,33 +17,6 @@ int z_shell_log_backend_output_func(uint8_t *data, size_t length, void *ctx)
 	return length;
 }
 
-void z_shell_log_backend_enable(const struct shell_log_backend *backend,
-				void *ctx, uint32_t init_log_level)
-{
-	int err = 0;
-
-	if (IS_ENABLED(CONFIG_LOG_IMMEDIATE)) {
-		const struct shell *shell;
-
-		shell = (const struct shell *)ctx;
-
-		/* Reenable transport in blocking mode */
-		err = shell->iface->api->enable(shell->iface, true);
-	}
-
-	if (IS_ENABLED(CONFIG_LOG2_MODE_DEFERRED)) {
-		mpsc_pbuf_init(backend->mpsc_buffer,
-			       backend->mpsc_buffer_config);
-	}
-
-	if (err == 0) {
-		log_backend_enable(backend->backend, ctx, init_log_level);
-		log_output_ctx_set(backend->log_output, ctx);
-		backend->control_block->dropped_cnt = 0;
-		backend->control_block->state = SHELL_LOG_BACKEND_ENABLED;
-	}
-}
-
 static struct log_msg *msg_from_fifo(const struct shell_log_backend *backend)
 {
 	struct shell_log_backend_msg msg;
@@ -54,13 +27,46 @@ static struct log_msg *msg_from_fifo(const struct shell_log_backend *backend)
 	return (err == 0) ? msg.msg : NULL;
 }
 
-static void fifo_flush(const struct shell_log_backend *backend)
+/* Set fifo clean state (in case of deferred mode). */
+static void fifo_reset(const struct shell_log_backend *backend)
 {
-	struct log_msg *msg;
+	if (IS_ENABLED(CONFIG_LOG2_DEFERRED)) {
+		mpsc_pbuf_init(backend->mpsc_buffer,
+			       backend->mpsc_buffer_config);
+		return;
+	}
 
-	/* Flush log messages. */
-	while ((msg = msg_from_fifo(backend)) != NULL) {
-		log_msg_put(msg);
+	/* Flush pending log messages without processing. */
+	if (IS_ENABLED(CONFIG_LOG1_DEFERRED)) {
+		struct log_msg *msg;
+
+		while ((msg = msg_from_fifo(backend)) != NULL) {
+			log_msg_put(msg);
+		}
+	}
+}
+
+void z_shell_log_backend_enable(const struct shell_log_backend *backend,
+				void *ctx, uint32_t init_log_level)
+{
+	int err = 0;
+
+	if (IS_ENABLED(CONFIG_LOG_MODE_IMMEDIATE)) {
+		const struct shell *shell;
+
+		shell = (const struct shell *)ctx;
+
+		z_flag_sync_mode_set(shell, true);
+		/* Reenable transport in blocking mode */
+		err = shell->iface->api->enable(shell->iface, true);
+	}
+
+	if (err == 0) {
+		fifo_reset(backend);
+		log_backend_enable(backend->backend, ctx, init_log_level);
+		log_output_ctx_set(backend->log_output, ctx);
+		backend->control_block->dropped_cnt = 0;
+		backend->control_block->state = SHELL_LOG_BACKEND_ENABLED;
 	}
 }
 
@@ -92,41 +98,41 @@ static void msg_to_fifo(const struct shell *shell,
 			struct log_msg *msg)
 {
 	int err;
+	bool cont;
 	struct shell_log_backend_msg t_msg = {
 		.msg = msg,
 		.timestamp = k_uptime_get_32()
 	};
 
-	err = k_msgq_put(shell->log_backend->msgq, &t_msg,
-			 K_MSEC(shell->log_backend->timeout));
+	do {
+		cont = false;
+		err = k_msgq_put(shell->log_backend->msgq, &t_msg,
+				 K_MSEC(shell->log_backend->timeout));
 
-	switch (err) {
-	case 0:
-		break;
-	case -EAGAIN:
-	case -ENOMSG:
-	{
-		flush_expired_messages(shell);
+		switch (err) {
+		case 0:
+			break;
+		case -EAGAIN:
+		case -ENOMSG:
+		{
+			/* Attempt to drop old message. */
+			flush_expired_messages(shell);
 
-		err = k_msgq_put(shell->log_backend->msgq, &msg, K_NO_WAIT);
-		if (err) {
-			/* Unexpected case as we just freed one element and
-			 * there is no other context that puts into the msgq.
-			 */
-			__ASSERT_NO_MSG(0);
+			/* Retry putting message. */
+			cont = true;
+
+			break;
 		}
-		break;
-	}
-	default:
-		/* Other errors are not expected. */
-		__ASSERT_NO_MSG(0);
-		break;
-	}
+		default:
+			/* Other errors are not expected. */
+			__ASSERT_NO_MSG(0);
+			break;
+		}
+	} while (cont);
 }
 
 void z_shell_log_backend_disable(const struct shell_log_backend *backend)
 {
-	fifo_flush(backend);
 	log_backend_disable(backend->backend);
 	backend->control_block->state = SHELL_LOG_BACKEND_DISABLED;
 }
@@ -152,7 +158,7 @@ bool z_shell_log_backend_process(const struct shell_log_backend *backend)
 			(const struct shell *)backend->backend->cb->ctx;
 	uint32_t dropped;
 	bool colors = IS_ENABLED(CONFIG_SHELL_VT100_COLORS) &&
-			shell->ctx->internal.flags.use_colors;
+			z_flag_use_colors_get(shell);
 
 	dropped = atomic_set(&backend->control_block->dropped_cnt, 0);
 	if (dropped) {
@@ -170,7 +176,7 @@ bool z_shell_log_backend_process(const struct shell_log_backend *backend)
 		}
 	}
 
-	if (IS_ENABLED(CONFIG_LOG2_MODE_DEFERRED)) {
+	if (IS_ENABLED(CONFIG_LOG2_DEFERRED)) {
 		return process_msg2_from_buffer(shell);
 	}
 
@@ -188,7 +194,7 @@ static void put(const struct log_backend *const backend, struct log_msg *msg)
 {
 	const struct shell *shell = (const struct shell *)backend->cb->ctx;
 	bool colors = IS_ENABLED(CONFIG_SHELL_VT100_COLORS) &&
-			shell->ctx->internal.flags.use_colors;
+			z_flag_use_colors_get(shell);
 	struct k_poll_signal *signal;
 
 	log_msg_get(msg);
@@ -275,7 +281,7 @@ static void panic(const struct log_backend *const backend)
 	const struct shell *shell = (const struct shell *)backend->cb->ctx;
 	int err;
 
-	if (IS_ENABLED(CONFIG_LOG_IMMEDIATE)) {
+	if (IS_ENABLED(CONFIG_LOG_MODE_IMMEDIATE)) {
 		return;
 	}
 
@@ -284,6 +290,7 @@ static void panic(const struct log_backend *const backend)
 	if (err == 0) {
 		shell->log_backend->control_block->state =
 						SHELL_LOG_BACKEND_PANIC;
+		z_flag_sync_mode_set(shell, true);
 
 		/* Move to the start of next line. */
 		z_shell_multiline_data_calc(&shell->ctx->vt100_ctx.cons,
@@ -293,11 +300,11 @@ static void panic(const struct log_backend *const backend)
 		z_shell_op_cursor_horiz_move(shell,
 					   -shell->ctx->vt100_ctx.cons.cur_x);
 
-		if (IS_ENABLED(CONFIG_LOG2_MODE_DEFERRED)) {
+		if (IS_ENABLED(CONFIG_LOG2_DEFERRED)) {
 			while (process_msg2_from_buffer(shell)) {
 				/* empty */
 			}
-		} else if (IS_ENABLED(CONFIG_LOG_MODE_DEFERRED)) {
+		} else if (IS_ENABLED(CONFIG_LOG1_DEFERRED)) {
 			while (z_shell_log_backend_process(
 						shell->log_backend)) {
 				/* empty */
@@ -382,7 +389,7 @@ static bool process_msg2_from_buffer(const struct shell *shell)
 	const struct log_output *log_output = log_backend->log_output;
 	union log_msg2_generic *msg;
 	bool colors = IS_ENABLED(CONFIG_SHELL_VT100_COLORS) &&
-			shell->ctx->internal.flags.use_colors;
+			z_flag_use_colors_get(shell);
 
 	msg = (union log_msg2_generic *)mpsc_pbuf_claim(mpsc_buffer);
 	if (!msg) {
@@ -404,12 +411,12 @@ static void log2_process(const struct log_backend *const backend,
 	struct mpsc_pbuf_buffer *mpsc_buffer = log_backend->mpsc_buffer;
 	const struct log_output *log_output = log_backend->log_output;
 	bool colors = IS_ENABLED(CONFIG_SHELL_VT100_COLORS) &&
-			shell->ctx->internal.flags.use_colors;
+			z_flag_use_colors_get(shell);
 	struct k_poll_signal *signal;
 
 	switch (shell->log_backend->control_block->state) {
 	case SHELL_LOG_BACKEND_ENABLED:
-		if (IS_ENABLED(CONFIG_LOG_IMMEDIATE)) {
+		if (IS_ENABLED(CONFIG_LOG_MODE_IMMEDIATE)) {
 			process_log_msg2(shell, log_output, msg, true, colors);
 		} else {
 			copy_to_pbuffer(mpsc_buffer, msg,
@@ -438,10 +445,10 @@ static void log2_process(const struct log_backend *const backend,
 
 const struct log_backend_api log_backend_shell_api = {
 	.process = IS_ENABLED(CONFIG_LOG2) ? log2_process : NULL,
-	.put = IS_ENABLED(CONFIG_LOG_MODE_DEFERRED) ? put : NULL,
-	.put_sync_string = IS_ENABLED(CONFIG_LOG_MODE_IMMEDIATE) ?
+	.put = IS_ENABLED(CONFIG_LOG1_DEFERRED) ? put : NULL,
+	.put_sync_string = IS_ENABLED(CONFIG_LOG1_IMMEDIATE) ?
 			put_sync_string : NULL,
-	.put_sync_hexdump = IS_ENABLED(CONFIG_LOG_MODE_IMMEDIATE) ?
+	.put_sync_hexdump = IS_ENABLED(CONFIG_LOG1_IMMEDIATE) ?
 			put_sync_hexdump : NULL,
 	.dropped = dropped,
 	.panic = panic,

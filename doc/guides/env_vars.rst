@@ -15,13 +15,19 @@ Option 1: Just Once
 To set the environment variable :envvar:`MY_VARIABLE` to ``foo`` for the
 lifetime of your current terminal window:
 
-.. code-block:: console
+.. tabs::
 
-   # Linux and macOS
-   export MY_VARIABLE=foo
+   .. group-tab:: Linux/macOS
 
-   # Windows
-   set MY_VARIABLE=foo
+      .. code-block:: console
+
+         export MY_VARIABLE=foo
+
+   .. group-tab:: Windows
+
+      .. code-block:: console
+
+         set MY_VARIABLE=foo
 
 .. warning::
 
@@ -34,38 +40,40 @@ lifetime of your current terminal window:
 Option 2: In all Terminals
 --------------------------
 
-**macOS and Linux**:
+.. tabs::
 
-Add the ``export MY_VARIABLE=foo`` line to your shell's startup script in your
-home directory. For Bash, this is usually :file:`~/.bashrc` on Linux or
-:file:`~/.bash_profile` on macOS.  Changes in these startup scripts don't
-affect shell instances already started; try opening a new terminal window to get
-the new settings.
+   .. group-tab:: Linux/macOS
 
-**Windows**:
+      Add the ``export MY_VARIABLE=foo`` line to your shell's startup script in
+      your home directory. For Bash, this is usually :file:`~/.bashrc` on Linux
+      or :file:`~/.bash_profile` on macOS.  Changes in these startup scripts
+      don't affect shell instances already started; try opening a new terminal
+      window to get the new settings.
 
-You can use the ``setx`` program in ``cmd.exe`` or the third-party
-RapidEE program.
+   .. group-tab:: Windows
 
-To use ``setx``, type this command, then close the terminal window. Any new
-``cmd.exe`` windows will have :envvar:`MY_VARIABLE` set to ``foo``.
+      You can use the ``setx`` program in ``cmd.exe`` or the third-party RapidEE
+      program.
 
-.. code-block:: console
+      To use ``setx``, type this command, then close the terminal window. Any
+      new ``cmd.exe`` windows will have :envvar:`MY_VARIABLE` set to ``foo``.
 
-   setx MY_VARIABLE foo
+      .. code-block:: console
 
-To install RapidEE, a freeware graphical environment variable
-editor, `using Chocolatey`_ in an Administrator command prompt:
+         setx MY_VARIABLE foo
 
-.. code-block:: console
+      To install RapidEE, a freeware graphical environment variable editor,
+      `using Chocolatey`_ in an Administrator command prompt:
 
-   choco install rapidee
+      .. code-block:: console
 
-You can then run ``rapidee`` from your terminal to launch the program and set
-environment variables. Make sure to use the "User" environment variables area
--- otherwise, you have to run RapidEE as administrator. Also make sure to save
-your changes by clicking the Save button at top left before exiting.Settings
-you make in RapidEE will be available whenever you open a new terminal window.
+         choco install rapidee
+
+      You can then run ``rapidee`` from your terminal to launch the program and set
+      environment variables. Make sure to use the "User" environment variables area
+      -- otherwise, you have to run RapidEE as administrator. Also make sure to save
+      your changes by clicking the Save button at top left before exiting.Settings
+      you make in RapidEE will be available whenever you open a new terminal window.
 
 .. _env_vars_zephyrrc:
 
@@ -76,47 +84,48 @@ Choose this option if you don't want to make the variable's setting available
 to all of your terminals, but still want to save the value for loading into
 your environment when you are using Zephyr.
 
-**macOS and Linux**:
+.. tabs::
 
-Create a file named :file:`~/.zephyrrc` if it doesn't exist, then add this line
-to it:
+   .. group-tab:: Linux/macOS
 
-.. code-block:: console
+      Create a file named :file:`~/.zephyrrc` if it doesn't exist, then add this
+      line to it:
 
-   export MY_VARIABLE=foo
+      .. code-block:: console
 
-To get this value back into your current terminal environment, **you must run**
-``source zephyr-env.sh`` from the main ``zephyr`` repository. Among other
-things, this script sources :file:`~/.zephyrrc`.
+         export MY_VARIABLE=foo
 
-The value will be lost if you close the window, etc.; run ``source
-zephyr-env.sh`` again to get it back.
+      To get this value back into your current terminal environment, **you must
+      run** ``source zephyr-env.sh`` from the main ``zephyr`` repository. Among
+      other things, this script sources :file:`~/.zephyrrc`.
 
-**Windows**:
+      The value will be lost if you close the window, etc.; run ``source
+      zephyr-env.sh`` again to get it back.
 
-Add the line ``set MY_VARIABLE=foo`` to the file
-:file:`%userprofile%\\zephyrrc.cmd` using a text editor such as Notepad to save
-the value.
+   .. group-tab:: Windows
 
-To get this value back into your current terminal environment, **you must run**
-``zephyr-env.cmd`` in a ``cmd.exe`` window after changing directory to the main
-``zephyr`` repository.  Among other things, this script runs
-:file:`%userprofile%\\zephyrrc.cmd`.
+      Add the line ``set MY_VARIABLE=foo`` to the file
+      :file:`%userprofile%\\zephyrrc.cmd` using a text editor such as Notepad to
+      save the value.
 
-The value will be lost if you close the window, etc.; run ``zephyr-env.cmd``
-again to get it back.
+      To get this value back into your current terminal environment, **you must
+      run** ``zephyr-env.cmd`` in a ``cmd.exe`` window after changing directory
+      to the main ``zephyr`` repository.  Among other things, this script runs
+      :file:`%userprofile%\\zephyrrc.cmd`.
 
-Option 4: Using Zephyr Build Configuration CMake package
---------------------------------------------------------
+      The value will be lost if you close the window, etc.; run
+      ``zephyr-env.cmd`` again to get it back.
 
-Choose this option if you want to make those variable settings shared among all
-users of your project.
+      These scripts:
 
-Using a :ref:`cmake_build_config_package` allows you to commit the shared
-settings into the repository, so that all users can share them.
+      - set :envvar:`ZEPHYR_BASE` (see below) to the location of the zephyr
+        repository
+      - adds some Zephyr-specific locations (such as zephyr's :file:`scripts`
+        directory) to your :envvar:`PATH` environment variable
+      - loads any settings from the ``zephyrrc`` files described above in
+        :ref:`env_vars_zephyrrc`.
 
-It also removes the need for running ``source zephyr-env.sh`` or
-``zephyr-env.cmd`` when opening a new terminal.
+      You can thus use them any time you need any of these settings.
 
 .. _zephyr-env:
 
@@ -126,13 +135,21 @@ Zephyr Environment Scripts
 You can use the zephyr repository scripts ``zephyr-env.sh`` (for macOS and
 Linux) and ``zephyr-env.cmd`` (for Windows) to load Zephyr-specific settings
 into your current terminal's environment. To do so, run this command from the
-zephyr repository::
+zephyr repository:
 
-  # macOS and Linux
-  source zephyr-env.sh
+.. tabs::
 
-  # Windows
-  zephyr-env.cmd
+   .. group-tab:: Linux/macOS
+
+      .. code-block:: console
+
+         source zephyr-env.sh
+
+   .. group-tab:: Windows
+
+      .. code-block:: console
+
+         zephyr-env.cmd
 
 These scripts:
 
@@ -150,20 +167,29 @@ You can thus use them any time you need any of these settings.
 Important Environment Variables
 *******************************
 
-Here are some important environment variables and what they contain. This is
-not a comprehensive index to the environment variables which affect Zephyr's
-behavior.
+Some :ref:`important-build-vars` can also be set in the environment. Here
+is a description of some of these important environment variables. This is not
+a comprehensive list.
 
-- :envvar:`BOARD`: allows set the board when building an application; see
-  :ref:`important-build-vars`.
-- :envvar:`CONF_FILE`: allows adding Kconfig fragments to an application build;
-  see :ref:`important-build-vars`.
-- :envvar:`DTC_OVERLAY_FILE`: allows adding devicetree overlays to an
-  application build; see :ref:`important-build-vars`.
-- :envvar:`ZEPHYR_BASE`: the absolute path to the main ``zephyr`` repository.
-  This is set whenever you run the ``zephyr-env.sh`` or ``zephyr-env.cmd``
-  scripts mentioned above.
-- :envvar:`ZEPHYR_TOOLCHAIN_VARIANT`: the current :ref:`toolchain
-  <gs_toolchain>` used to build Zephyr applications.
+- :envvar:`BOARD`
+- :envvar:`CONF_FILE`
+- :envvar:`SHIELD`
+- :envvar:`ZEPHYR_BASE`
+- :envvar:`ZEPHYR_EXTRA_MODULES`
+- :envvar:`ZEPHYR_MODULES`
+
+The following additional environment variables are significant when configuring
+the :ref:`toolchain <gs_toolchain>` used to build Zephyr applications.
+
+- :envvar:`ZEPHYR_TOOLCHAIN_VARIANT`: the name of the toolchain to use
+- :envvar:`<TOOLCHAIN>_TOOLCHAIN_PATH`: path to the toolchain specified by
+  :envvar:`ZEPHYR_TOOLCHAIN_VARIANT`. For example, if
+  ``ZEPHYR_TOOLCHAIN_VARIANT=llvm``, use :envvar:`LLVM_TOOLCHAIN_PATH`. (Note
+  the capitalization when forming the environment variable name.)
+
+Emulators and boards may also depend on additional programs. The build system
+will try to locate those programs automatically, but may rely on additional
+CMake or environment variables to do so. Please consult your emulator's or
+board's documentation for more information.
 
 .. _using Chocolatey: https://chocolatey.org/packages/RapidEE

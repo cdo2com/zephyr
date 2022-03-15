@@ -45,15 +45,13 @@
  * created by this routine to determine the locations of volatile registers.
  * These tools must be updated to reflect any changes to the stack frame.
  *
- * @return N/A
- *
  * C function prototype:
  *
  * void _exception_enter(uint32_t error_code, void *handler)
  *
  */
 
-SECTION_FUNC(TEXT, _exception_enter)
+SECTION_FUNC(PINNED_TEXT, _exception_enter)
 
 	/*
 	 * The gen_idt tool creates an interrupt-gate descriptor for
@@ -234,7 +232,7 @@ nestedException:
 	/* Pop of EFLAGS will re-enable interrupts and restore direction flag */
 	KPTI_IRET
 
-SECTION_FUNC(TEXT, _kernel_oops_handler)
+SECTION_FUNC(PINNED_TEXT, _kernel_oops_handler)
 	push $0 /* dummy error code */
 	push $z_x86_do_kernel_oops
 	jmp _exception_enter

@@ -18,6 +18,7 @@
 
 #include "wdt_wwdg_stm32.h"
 
+#define LOG_LEVEL CONFIG_WDT_LOG_LEVEL
 #include <logging/log.h>
 LOG_MODULE_REGISTER(wdt_wwdg_stm32);
 
@@ -167,8 +168,16 @@ static int wwdg_stm32_setup(const struct device *dev, uint8_t options)
 		LL_APB1_GRP2_EnableClock(LL_APB1_GRP2_PERIPH_DBGMCU);
 #elif defined(CONFIG_SOC_SERIES_STM32L0X)
 		LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_DBGMCU);
+#elif defined(CONFIG_SOC_SERIES_STM32G0X)
+		LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_DBGMCU);
 #endif
+#if defined(CONFIG_SOC_SERIES_STM32H7X)
+		LL_DBGMCU_APB3_GRP1_FreezePeriph(LL_DBGMCU_APB3_GRP1_WWDG1_STOP);
+#elif defined(CONFIG_SOC_SERIES_STM32MP1X)
+		LL_DBGMCU_APB1_GRP1_FreezePeriph(LL_DBGMCU_APB1_GRP1_WWDG1_STOP);
+#else
 		LL_DBGMCU_APB1_GRP1_FreezePeriph(LL_DBGMCU_APB1_GRP1_WWDG_STOP);
+#endif /* CONFIG_SOC_SERIES_STM32H7X */
 	}
 
 	if (options & WDT_OPT_PAUSE_IN_SLEEP) {
@@ -289,7 +298,7 @@ static struct wwdg_stm32_config wwdg_stm32_dev_config = {
 	.Instance = (WWDG_TypeDef *)DT_INST_REG_ADDR(0),
 };
 
-DEVICE_DT_INST_DEFINE(0, wwdg_stm32_init, device_pm_control_nop,
+DEVICE_DT_INST_DEFINE(0, wwdg_stm32_init, NULL,
 		    &wwdg_stm32_dev_data, &wwdg_stm32_dev_config,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &wwdg_stm32_api);

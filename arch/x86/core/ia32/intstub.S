@@ -56,13 +56,11 @@
  * created by this routine to determine the locations of volatile registers.
  * These tools must be updated to reflect any changes to the stack frame.
  *
- * @return N/A
- *
  * C function prototype:
  *
  * void _interrupt_enter(void *isr, void *isr_param);
  */
-SECTION_FUNC(TEXT, _interrupt_enter)
+SECTION_FUNC(PINNED_TEXT, _interrupt_enter)
 	/*
 	 * Note that the processor has pushed both the EFLAGS register
 	 * and the logical return address (cs:eip) onto the stack prior
@@ -301,8 +299,6 @@ nestedInterrupt:
 handle_idle:
 	pushl	%eax
 	pushl	%edx
-	/* Populate 'ticks' argument to z_pm_save_idle_exit */
-	push	_kernel_offset_to_idle(%ecx)
 	/* Zero out _kernel.idle */
 	movl	$0, _kernel_offset_to_idle(%ecx)
 
@@ -314,8 +310,6 @@ handle_idle:
 	 */
 
 	call	z_pm_save_idle_exit
-	/* discard 'ticks' argument passed on the stack */
-	add	$0x4, %esp
 	popl	%edx
 	popl	%eax
 	jmp	alreadyOnIntStack
@@ -349,14 +343,14 @@ handle_idle:
  * thus z_SpuriousIntNoErrCodeHandler()/z_SpuriousIntHandler() shall be
  * invoked with interrupts disabled.
  */
-SECTION_FUNC(TEXT, z_SpuriousIntNoErrCodeHandler)
+SECTION_FUNC(PINNED_TEXT, z_SpuriousIntNoErrCodeHandler)
 
 	pushl	$0			/* push dummy err code onto stk */
 
 	/* fall through to z_SpuriousIntHandler */
 
 
-SECTION_FUNC(TEXT, z_SpuriousIntHandler)
+SECTION_FUNC(PINNED_TEXT, z_SpuriousIntHandler)
 
 	cld				/* Clear direction flag */
 
@@ -384,7 +378,7 @@ SECTION_FUNC(TEXT, z_SpuriousIntHandler)
 	/* handler doesn't  return */
 
 #if CONFIG_IRQ_OFFLOAD
-SECTION_FUNC(TEXT, _irq_sw_handler)
+SECTION_FUNC(PINNED_TEXT, _irq_sw_handler)
 	push $0
 	push $z_irq_do_offload
 	jmp _interrupt_enter

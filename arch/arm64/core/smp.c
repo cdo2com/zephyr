@@ -18,7 +18,7 @@
 #include <ksched.h>
 #include <soc.h>
 #include <init.h>
-#include <arch/arm64/arm_mmu.h>
+#include <arch/arm64/mm.h>
 #include <arch/cpu.h>
 #include <drivers/interrupt_controller/gic.h>
 #include <drivers/pm_cpu_ops.h>
@@ -26,7 +26,8 @@
 #include "boot.h"
 
 #define SGI_SCHED_IPI	0
-#define SGI_PTABLE_IPI	1
+#define SGI_MMCFG_IPI	1
+#define SGI_FPU_IPI	2
 
 struct boot_params {
 	uint64_t mpid;
@@ -47,19 +48,22 @@ volatile struct boot_params __aligned(L1_CACHE_BYTES) arm64_cpu_boot_params = {
 #define CPU_REG_ID(cpu_node_id) DT_REG_ADDR(cpu_node_id),
 
 static const uint64_t cpu_node_list[] = {
-	DT_FOREACH_CHILD(DT_PATH(cpus), CPU_REG_ID)
+	DT_FOREACH_CHILD_STATUS_OKAY(DT_PATH(cpus), CPU_REG_ID)
 };
+
+extern void z_arm64_mm_init(bool is_primary_core);
 
 /* Called from Zephyr initialization */
 void arch_start_cpu(int cpu_num, k_thread_stack_t *stack, int sz,
 		    arch_cpustart_t fn, void *arg)
 {
 	int cpu_count, i, j;
-	uint64_t cpu_mpid, master_core_mpid;
+	uint64_t cpu_mpid = 0;
+	uint64_t master_core_mpid;
 
 	/* Now it is on master core */
+	__ASSERT(arch_curr_cpu()->id == 0, "");
 	master_core_mpid = MPIDR_TO_CORE(GET_MPIDR());
-	__ASSERT(arm64_cpu_boot_params.mpid == master_core_mpid, "");
 
 	cpu_count = ARRAY_SIZE(cpu_node_list);
 	__ASSERT(cpu_count == CONFIG_MP_NUM_CPUS,
@@ -119,14 +123,17 @@ void z_arm64_secondary_start(void)
 	/* Initialize tpidrro_el0 with our struct _cpu instance address */
 	write_tpidrro_el0((uintptr_t)&_kernel.cpus[cpu_num]);
 
-	z_arm64_mmu_init(false);
+	z_arm64_mm_init(false);
 
 #ifdef CONFIG_SMP
 	arm_gic_secondary_init();
 
 	irq_enable(SGI_SCHED_IPI);
 #ifdef CONFIG_USERSPACE
-	irq_enable(SGI_PTABLE_IPI);
+	irq_enable(SGI_MMCFG_IPI);
+#endif
+#ifdef CONFIG_FPU_SHARING
+	irq_enable(SGI_FPU_IPI);
 #endif
 #endif
 
@@ -173,7 +180,7 @@ void arch_sched_ipi(void)
 }
 
 #ifdef CONFIG_USERSPACE
-void ptable_ipi_handler(const void *unused)
+void mem_cfg_ipi_handler(const void *unused)
 {
 	ARG_UNUSED(unused);
 
@@ -181,12 +188,30 @@ void ptable_ipi_handler(const void *unused)
 	 * Make sure a domain switch by another CPU is effective on this CPU.
 	 * This is a no-op if the page table is already the right one.
 	 */
-	z_arm64_swap_ptables(_current);
+	z_arm64_swap_mem_domains(_current);
 }
 
-void z_arm64_ptable_ipi(void)
+void z_arm64_mem_cfg_ipi(void)
 {
-	broadcast_ipi(SGI_PTABLE_IPI);
+	broadcast_ipi(SGI_MMCFG_IPI);
+}
+#endif
+
+#ifdef CONFIG_FPU_SHARING
+void flush_fpu_ipi_handler(const void *unused)
+{
+	ARG_UNUSED(unused);
+
+	disable_irq();
+	z_arm64_flush_local_fpu();
+	/* no need to re-enable IRQs here */
+}
+
+void z_arm64_flush_fpu_ipi(unsigned int cpu)
+{
+	const uint64_t mpidr = GET_MPIDR();
+
+	gic_raise_sgi(SGI_FPU_IPI, mpidr, (1 << cpu));
 }
 #endif
 
@@ -202,12 +227,17 @@ static int arm64_smp_init(const struct device *dev)
 	irq_enable(SGI_SCHED_IPI);
 
 #ifdef CONFIG_USERSPACE
-	IRQ_CONNECT(SGI_PTABLE_IPI, IRQ_DEFAULT_PRIORITY, ptable_ipi_handler, NULL, 0);
-	irq_enable(SGI_PTABLE_IPI);
+	IRQ_CONNECT(SGI_MMCFG_IPI, IRQ_DEFAULT_PRIORITY,
+			mem_cfg_ipi_handler, NULL, 0);
+	irq_enable(SGI_MMCFG_IPI);
+#endif
+#ifdef CONFIG_FPU_SHARING
+	IRQ_CONNECT(SGI_FPU_IPI, IRQ_DEFAULT_PRIORITY, flush_fpu_ipi_handler, NULL, 0);
+	irq_enable(SGI_FPU_IPI);
 #endif
 
 	return 0;
 }
-SYS_INIT(arm64_smp_init, PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
+SYS_INIT(arm64_smp_init, PRE_KERNEL_2, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
 #endif

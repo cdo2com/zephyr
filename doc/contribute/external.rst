@@ -103,7 +103,7 @@ Regardless of the mode of integration, external source code that is integrated
 in Zephyr requires regular ongoing maintenance. The submitter of the proposal to
 integrate external source code must therefore commit to maintain the integration
 of such code for the foreseeable future.
-This may require adding an entry in the :file:`MAINTAINERS.yaml` as part of the
+This may require adding an entry in the :file:`MAINTAINERS.yml` as part of the
 process.
 
 .. _external-src-process:
@@ -124,7 +124,8 @@ Follow the steps below to begin the submission process:
 #. Make sure to read through the :ref:`external-contributions` section in
    detail, so that you are informed of the criteria used by the TSC and board in
    order to approve or reject a request
-#. Use the `New External Source Code Issue`_ to open an issue
+#. Use the :github:`New External Source Code Issue
+   <new?assignees=&labels=RFC&template=ext-source.md&title=>` to open an issue
 #. Fill out all required sections, making sure you provide enough detail for the
    TSC to assess the merit of the request. Optionally you can also create a Pull
    Request that demonstrates the integration of the external source code and
@@ -137,7 +138,7 @@ source code is the best solution, and the external source code is licensed under
 the Apache-2.0 license, the submission process is complete and the external
 source code can be integrated.
 
-If, however, the esternal source code uses a license other than Apache-2.0,
+If, however, the external source code uses a license other than Apache-2.0,
 then these additional steps must be followed:
 
 #. The TSC chair will forward the link to the GitHub issue created during the
@@ -163,6 +164,3 @@ The flowchart below shows an overview of the process:
    :align: center
 
    Submission process
-
-.. _New External Source Code Issue:
-   https://github.com/zephyrproject-rtos/zephyr/issues/new?assignees=&labels=RFC&template=ext-source.md&title=

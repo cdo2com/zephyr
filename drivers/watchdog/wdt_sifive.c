@@ -59,10 +59,9 @@ struct wdt_sifive_dev_data {
 	bool timeout_valid;
 };
 
-#define DEV_CFG(dev) \
-	((const struct wdt_sifive_device_config *const)(dev)->config)
 #define DEV_REG(dev) \
-	((struct wdt_sifive_reg *)(DEV_CFG(dev))->regs)
+	((struct wdt_sifive_reg *) \
+	 ((const struct wdt_sifive_device_config *const)(dev)->config)->regs)
 
 /**
  * @brief Set maximum length of timeout to watchdog
@@ -282,6 +281,6 @@ static const struct wdt_sifive_device_config wdt_sifive_cfg = {
 	.regs = DT_INST_REG_ADDR(0),
 };
 
-DEVICE_DT_INST_DEFINE(0, wdt_sifive_init, device_pm_control_nop,
+DEVICE_DT_INST_DEFINE(0, wdt_sifive_init, NULL,
 		      &wdt_sifive_data, &wdt_sifive_cfg, PRE_KERNEL_1,
 		      CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &wdt_sifive_api);

@@ -16,6 +16,7 @@
 #include <device.h>
 #include <drivers/spi.h>
 #include <drivers/gpio.h>
+#include <pm/device.h>
 #include <sys/byteorder.h>
 #include <drivers/display.h>
 
@@ -34,9 +35,7 @@ struct st7735r_gpio_data {
 };
 
 struct st7735r_config {
-	const char *spi_name;
-	const char *cs_name;
-	struct spi_config spi_config;
+	struct spi_dt_spec bus;
 	struct st7735r_gpio_data cmd_data;
 	struct st7735r_gpio_data reset;
 	uint16_t height;
@@ -61,15 +60,10 @@ struct st7735r_config {
 
 struct st7735r_data {
 	const struct st7735r_config *config;
-	const struct device *spi_dev;
-	struct spi_cs_control cs_ctrl;
 	const struct device *cmd_data_dev;
 	const struct device *reset_dev;
 	uint16_t x_offset;
 	uint16_t y_offset;
-#ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-	uint32_t pm_state;
-#endif
 };
 
 static void st7735r_set_lcd_margins(struct st7735r_data *data,
@@ -92,7 +86,7 @@ static int st7735r_transmit(struct st7735r_data *data, uint8_t cmd,
 	int ret;
 
 	st7735r_set_cmd(data, 1);
-	ret = spi_write(data->spi_dev, &data->config->spi_config, &tx_bufs);
+	ret = spi_write_dt(&data->config->bus, &tx_bufs);
 	if (ret < 0) {
 		return ret;
 	}
@@ -101,7 +95,7 @@ static int st7735r_transmit(struct st7735r_data *data, uint8_t cmd,
 		tx_buf.buf = (void *)tx_data;
 		tx_buf.len = tx_count;
 		st7735r_set_cmd(data, 0);
-		ret = spi_write(data->spi_dev, &data->config->spi_config, &tx_bufs);
+		ret = spi_write_dt(&data->config->bus, &tx_bufs);
 		if (ret < 0) {
 			return ret;
 		}
@@ -147,14 +141,14 @@ static int st7735r_reset_display(struct st7735r_data *data)
 
 static int st7735r_blanking_on(const struct device *dev)
 {
-	struct st7735r_data *data = (struct st7735r_data *)dev->data;
+	struct st7735r_data *data = dev->data;
 
 	return st7735r_transmit(data, ST7735R_CMD_DISP_OFF, NULL, 0);
 }
 
 static int st7735r_blanking_off(const struct device *dev)
 {
-	struct st7735r_data *data = (struct st7735r_data *)dev->data;
+	struct st7735r_data *data = dev->data;
 
 	return st7735r_transmit(data, ST7735R_CMD_DISP_ON, NULL, 0);
 }
@@ -202,7 +196,7 @@ static int st7735r_write(const struct device *dev,
 			 const struct display_buffer_descriptor *desc,
 			 const void *buf)
 {
-	struct st7735r_data *data = (struct st7735r_data *)dev->data;
+	struct st7735r_data *data = dev->data;
 	const uint8_t *write_data_start = (uint8_t *) buf;
 	struct spi_buf tx_buf;
 	struct spi_buf_set tx_bufs;
@@ -244,7 +238,7 @@ static int st7735r_write(const struct device *dev,
 	for (write_cnt = 1U; write_cnt < nbr_of_writes; ++write_cnt) {
 		tx_buf.buf = (void *)write_data_start;
 		tx_buf.len = desc->width * ST7735R_PIXEL_SIZE * write_h;
-		ret = spi_write(data->spi_dev, &data->config->spi_config, &tx_bufs);
+		ret = spi_write_dt(&data->config->bus, &tx_bufs);
 		if (ret < 0) {
 			return ret;
 		}
@@ -275,7 +269,7 @@ static int st7735r_set_contrast(const struct device *dev,
 static void st7735r_get_capabilities(const struct device *dev,
 				     struct display_capabilities *capabilities)
 {
-	struct st7735r_config *config = (struct st7735r_config *)dev->config;
+	const struct st7735r_config *config = dev->config;
 
 	memset(capabilities, 0, sizeof(struct display_capabilities));
 	capabilities->x_resolution = config->width;
@@ -294,7 +288,7 @@ static void st7735r_get_capabilities(const struct device *dev,
 static int st7735r_set_pixel_format(const struct device *dev,
 				    const enum display_pixel_format pixel_format)
 {
-	struct st7735r_config *config = (struct st7735r_config *)dev->config;
+	const struct st7735r_config *config = dev->config;
 
 	if ((pixel_format == PIXEL_FORMAT_RGB_565) &&
 	    (~config->madctl & ST7735R_MADCTL_BGR)) {
@@ -442,22 +436,13 @@ static int st7735r_lcd_init(struct st7735r_data *data)
 
 static int st7735r_init(const struct device *dev)
 {
-	struct st7735r_data *data = (struct st7735r_data *)dev->data;
-	struct st7735r_config *config = (struct st7735r_config *)dev->config;
+	struct st7735r_data *data = dev->data;
+	const struct st7735r_config *config = dev->config;
 	int ret;
 
-	data->spi_dev = device_get_binding(config->spi_name);
-	if (data->spi_dev == NULL) {
-		LOG_ERR("Could not get SPI device for LCD");
+	if (!spi_is_ready(&config->bus)) {
+		LOG_ERR("SPI bus %s not ready", config->bus.bus->name);
 		return -ENODEV;
-	}
-
-	if (config->cs_name) {
-		data->cs_ctrl.gpio_dev = device_get_binding(config->cs_name);
-		if (data->cs_ctrl.gpio_dev == NULL) {
-			LOG_ERR("Could not get device for SPI CS");
-			return -ENODEV;
-		}
 	}
 
 	if (config->reset.name) {
@@ -474,10 +459,6 @@ static int st7735r_init(const struct device *dev)
 			return ret;
 		}
 	}
-
-#ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-	data->pm_state = DEVICE_PM_ACTIVE_STATE;
-#endif
 
 	data->cmd_data_dev = device_get_binding(config->cmd_data.name);
 	if (data->cmd_data_dev == NULL) {
@@ -513,52 +494,28 @@ static int st7735r_init(const struct device *dev)
 	return 0;
 }
 
-#ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-static int st7735r_enter_sleep(struct st7735r_data *data)
-{
-	return st7735r_transmit(data, ST7735R_CMD_SLEEP_IN, NULL, 0);
-}
-
-static int st7735r_pm_control(const struct device *dev, uint32_t ctrl_command,
-			      void *context, device_pm_cb cb, void *arg)
+#ifdef CONFIG_PM_DEVICE
+static int st7735r_pm_action(const struct device *dev,
+			     enum pm_device_action action)
 {
 	int ret = 0;
-	struct st7735r_data *data = (struct st7735r_data *)dev->data;
+	struct st7735r_data *data = dev->data;
 
-	switch (ctrl_command) {
-	case DEVICE_PM_SET_POWER_STATE:
-		if (*((uint32_t *)context) == DEVICE_PM_ACTIVE_STATE) {
-			ret = st7735r_exit_sleep(data);
-			if (ret < 0) {
-				return ret;
-			}
-			data->pm_state = DEVICE_PM_ACTIVE_STATE;
-		} else {
-			ret = st7735r_enter_sleep(data);
-			if (ret < 0) {
-				return ret;
-			}
-			data->pm_state = DEVICE_PM_LOW_POWER_STATE;
-		}
-
+	switch (action) {
+	case PM_DEVICE_ACTION_RESUME:
+		ret = st7735r_exit_sleep(data);
 		break;
-
-	case DEVICE_PM_GET_POWER_STATE:
-		*((uint32_t *)context) = data->pm_state;
-
+	case PM_DEVICE_ACTION_SUSPEND:
+		ret = st7735r_transmit(data, ST7735R_CMD_SLEEP_IN, NULL, 0);
 		break;
-
 	default:
-		ret = -EINVAL;
-	}
-
-	if (cb != NULL) {
-		cb(dev, ret, context, arg);
+		ret = -ENOTSUP;
+		break;
 	}
 
 	return ret;
 }
-#endif /* CONFIG_DEVICE_POWER_MANAGEMENT */
+#endif /* CONFIG_PM_DEVICE */
 
 static const struct display_driver_api st7735r_api = {
 	.blanking_on = st7735r_blanking_on,
@@ -578,29 +535,19 @@ static const struct display_driver_api st7735r_api = {
 	static struct st7735r_data st7735r_data_ ## inst;			\
 										\
 	const static struct st7735r_config st7735r_config_ ## inst = {		\
-		.spi_name = DT_INST_BUS_LABEL(inst),				\
-		.cs_name = UTIL_AND(						\
-			DT_INST_SPI_DEV_HAS_CS_GPIOS(inst),			\
-			DT_INST_SPI_DEV_CS_GPIOS_LABEL(inst)),			\
-		.spi_config.slave = DT_INST_REG_ADDR(inst),			\
-		.spi_config.frequency = UTIL_AND(				\
-			DT_HAS_PROP(inst, spi_max_frequency),			\
-			DT_INST_PROP(inst, spi_max_frequency)),			\
-		.spi_config.operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8),	\
-		.spi_config.cs = UTIL_AND(					\
-			DT_INST_SPI_DEV_HAS_CS_GPIOS(inst),			\
-			&(st7735r_data_ ## inst.cs_ctrl)),			\
+		.bus = SPI_DT_SPEC_INST_GET(					\
+			inst, SPI_OP_MODE_MASTER | SPI_WORD_SET(8), 0),		\
 		.cmd_data.name = DT_INST_GPIO_LABEL(inst, cmd_data_gpios),	\
 		.cmd_data.pin = DT_INST_GPIO_PIN(inst, cmd_data_gpios),		\
 		.cmd_data.flags = DT_INST_GPIO_FLAGS(inst, cmd_data_gpios),	\
 		.reset.name = UTIL_AND(						\
-			DT_INST_HAS_PROP(inst, reset_gpios),			\
+			DT_INST_NODE_HAS_PROP(inst, reset_gpios),		\
 			DT_INST_GPIO_LABEL(inst, reset_gpios)),			\
 		.reset.pin = UTIL_AND(						\
-			DT_INST_HAS_PROP(inst, reset_gpios),			\
+			DT_INST_NODE_HAS_PROP(inst, reset_gpios),		\
 			DT_INST_GPIO_PIN(inst, reset_gpios)),			\
 		.reset.flags = UTIL_AND(					\
-			DT_INST_HAS_PROP(inst, reset_gpios),			\
+			DT_INST_NODE_HAS_PROP(inst, reset_gpios),		\
 			DT_INST_GPIO_FLAGS(inst, reset_gpios)),			\
 		.width = DT_INST_PROP(inst, width),				\
 		.height = DT_INST_PROP(inst, height),				\
@@ -624,19 +571,15 @@ static const struct display_driver_api st7735r_api = {
 										\
 	static struct st7735r_data st7735r_data_ ## inst = {			\
 		.config = &st7735r_config_ ## inst,				\
-		.cs_ctrl.gpio_pin = UTIL_AND(					\
-			DT_INST_SPI_DEV_HAS_CS_GPIOS(inst),			\
-			DT_INST_SPI_DEV_CS_GPIOS_PIN(inst)),			\
-		.cs_ctrl.gpio_dt_flags = UTIL_AND(				\
-			DT_INST_SPI_DEV_HAS_CS_GPIOS(inst),			\
-			DT_INST_SPI_DEV_CS_GPIOS_FLAGS(inst)),			\
-		.cs_ctrl.delay = 0U,						\
 		.x_offset = DT_INST_PROP(inst, x_offset),			\
 		.y_offset = DT_INST_PROP(inst, y_offset),			\
 	};									\
-	DEVICE_DT_INST_DEFINE(inst, st7735r_init, st7735r_pm_control,		\
+										\
+	PM_DEVICE_DT_INST_DEFINE(inst, st7735r_pm_action);			\
+										\
+	DEVICE_DT_INST_DEFINE(inst, st7735r_init, PM_DEVICE_DT_INST_GET(inst),	\
 			      &st7735r_data_ ## inst, &st7735r_config_ ## inst,	\
-			      APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY,	\
+			      POST_KERNEL, CONFIG_DISPLAY_INIT_PRIORITY,	\
 			      &st7735r_api);
 
 DT_INST_FOREACH_STATUS_OKAY(ST7735R_INIT)

@@ -3,8 +3,9 @@ name: CAVS 2.5 Audio DSP (Connected Audio Voice and Speech)
 type: mcu
 arch: xtensa
 toolchain:
+  - xcc
   - zephyr
 testing:
-  only_tags:
-     - kernel
-     - sof
+  ignore_tags:
+     - net
+     - bluetooth

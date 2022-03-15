@@ -7,11 +7,11 @@
 /**
  * @file
  *
- * @brief Zephyr testing suite
+ * @brief Zephyr Testsuite
  */
 
 /**
- * @brief Zephyr Tests
+ * @brief Zephyr Tests (ZTest)
  * @defgroup all_tests Zephyr Tests
  * @{
  * @}
@@ -38,6 +38,7 @@
 #define CONFIG_MP_NUM_CPUS 1
 #define CONFIG_SYS_CLOCK_TICKS_PER_SEC 100
 #define CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC 10000000
+#define CONFIG_SYS_CLOCK_MAX_TIMEOUT_DAYS 365
 #define ARCH_STACK_PTR_ALIGN 8
 /* FIXME: Properly integrate with Zephyr's arch specific code */
 #define CONFIG_X86 1

@@ -30,15 +30,75 @@ static void tIsr_kheap_alloc_nowait(void *data)
 
 static void thread_alloc_heap(void *p1, void *p2, void *p3)
 {
+	char *p;
+
 	k_timeout_t timeout = Z_TIMEOUT_MS(200);
 
-	char *p = (char *)k_heap_alloc(&k_heap_test, ALLOC_SIZE_2, timeout);
+	p = (char *)k_heap_alloc(&k_heap_test, ALLOC_SIZE_2, K_NO_WAIT);
 
-	zassert_not_null(p, "k_heap_alloc operation failed");
+	zassert_is_null(p, "k_heap_alloc should fail but did not");
+
+	p = (char *)k_heap_alloc(&k_heap_test, ALLOC_SIZE_2, timeout);
+
+	zassert_not_null(p, "k_heap_alloc failed to allocate memory");
+
+	k_heap_free(&k_heap_test, p);
+}
+
+static void thread_alloc_heap_null(void *p1, void *p2, void *p3)
+{
+	char *p;
+
+	k_timeout_t timeout = Z_TIMEOUT_MS(200);
+
+	p = (char *)k_heap_alloc(&k_heap_test, ALLOC_SIZE_2, K_NO_WAIT);
+
+	zassert_is_null(p, "k_heap_alloc should fail but did not");
+
+	p = (char *)k_heap_alloc(&k_heap_test, ALLOC_SIZE_2, timeout);
+
+	zassert_is_null(p, "k_heap_alloc should fail but did not");
+
 	k_heap_free(&k_heap_test, p);
 }
 
 /*test cases*/
+
+/* These need to be adjacent in BSS */
+volatile uint32_t heap_guard0;
+K_HEAP_DEFINE(tiny_heap, 1);
+volatile uint32_t heap_guard1;
+
+/** @brief Test a minimum-size static k_heap
+ *  @ingroup kernel_kheap_api_tests
+ *
+ * @details Create a minimum size (1-byte) static heap, verify that it
+ * works to allocate that byte at runtime and that it doesn't overflow
+ * its memory bounds.
+ */
+void test_k_heap_min_size(void)
+{
+	const uint32_t guard_bits = 0x5a5a5a5a;
+
+	/* Make sure static initialization didn't scribble on them */
+	zassert_true(heap_guard0 == 0 && heap_guard1 == 0,
+		     "static heap initialization overran buffer");
+
+	heap_guard0 = guard_bits;
+	heap_guard1 = guard_bits;
+
+	char *p0 = k_heap_alloc(&tiny_heap, 1, K_NO_WAIT);
+	char *p1 = k_heap_alloc(&tiny_heap, 1, K_NO_WAIT);
+
+	zassert_not_null(p0, "allocation failed");
+	zassert_is_null(p1, "second allocation unexpectedly succeeded");
+
+	*p0 = 0xff;
+	k_heap_free(&tiny_heap, p0);
+
+	zassert_equal(heap_guard0, guard_bits, "heap overran buffer");
+	zassert_equal(heap_guard1, guard_bits, "heap overran buffer");
+}
 
 /**
  * @brief Test to demonstrate k_heap_alloc() and k_heap_free() API usage
@@ -140,17 +200,68 @@ void test_kheap_alloc_in_isr_nowait(void)
  */
 void test_k_heap_alloc_pending(void)
 {
-	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
-					thread_alloc_heap, NULL, NULL, NULL,
-					K_PRIO_PREEMPT(5), 0, K_NO_WAIT);
-
+	/*
+	 * Allocate first to make sure subsequent allocations
+	 * either fail (K_NO_WAIT) or pend.
+	 */
 	char *p = (char *)k_heap_alloc(&k_heap_test, ALLOC_SIZE_2, K_NO_WAIT);
 
 	zassert_not_null(p, "k_heap_alloc operation failed");
 
-	/* make the child thread run */
-	k_msleep(1);
+	/* Create a thread which will pend on allocation */
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
+				      thread_alloc_heap, NULL, NULL, NULL,
+				      K_PRIO_PREEMPT(5), 0, K_NO_WAIT);
+
+	/* Sleep long enough for child thread to go into pending */
+	k_msleep(5);
+
+	/*
+	 * Free memory so the child thread can finish memory allocation
+	 * without failing.
+	 */
 	k_heap_free(&k_heap_test, p);
 
 	k_thread_join(tid, K_FOREVER);
+}
+
+/**
+ * @brief Validate the k_heap alloc_pending_null support.
+ *
+ * @details In main thread alloc two buffer from the heap, then run the
+ * child thread which alloc a buffer larger than remaining space. The child thread
+ * will wait timeout long until main thread free one of the buffer to heap, space in
+ * the heap is still not enough and then return null after timeout.
+ *
+ * @ingroup kernel_heap_tests
+ */
+void test_k_heap_alloc_pending_null(void)
+{
+	/*
+	 * Allocate first to make sure subsequent allocations
+	 * either fail (K_NO_WAIT) or pend.
+	 */
+	char *p = (char *)k_heap_alloc(&k_heap_test, ALLOC_SIZE_1, K_NO_WAIT);
+	char *q = (char *)k_heap_alloc(&k_heap_test, 512, K_NO_WAIT);
+
+	zassert_not_null(p, "k_heap_alloc operation failed");
+	zassert_not_null(q, "k_heap_alloc operation failed");
+
+	/* Create a thread which will pend on allocation */
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
+				      thread_alloc_heap_null, NULL, NULL, NULL,
+				      K_PRIO_PREEMPT(5), 0, K_NO_WAIT);
+
+	/* Sleep long enough for child thread to go into pending */
+	k_msleep(5);
+
+	/*
+	 * Free some memory but new thread will still not be able
+	 * to finish memory allocation without error.
+	 */
+	k_heap_free(&k_heap_test, q);
+
+	k_thread_join(tid, K_FOREVER);
+
+	k_heap_free(&k_heap_test, p);
 }

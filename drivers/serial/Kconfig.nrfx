@@ -17,6 +17,16 @@ menuconfig UART_NRFX
 
 if UART_NRFX
 
+config UART_ASYNC_TX_CACHE_SIZE
+	int "TX cache buffer size"
+	depends on UART_ASYNC_API
+	depends on NRF_UARTE_PERIPHERAL
+	default 8
+	help
+	  For UARTE, TX cache buffer is used when provided TX buffer is not located
+	  in RAM, because EasyDMA in UARTE peripherals can only transfer data
+	  from RAM.
+
 # Workaround for not being able to have commas in macro arguments
 DT_COMPAT_NORDIC_NRF_UART  := nordic,nrf-uart
 DT_COMPAT_NORDIC_NRF_UARTE := nordic,nrf-uarte
@@ -40,8 +50,6 @@ config UART_0_ENHANCED_POLL_OUT
 	bool "Efficient poll out on port 0"
 	default y
 	depends on UART_0_NRF_UARTE
-	select NRFX_PPI if HAS_HW_NRF_PPI
-	select NRFX_DPPI if HAS_HW_NRF_DPPIC
 	help
 	  When enabled, polling out does not trigger interrupt which stops TX.
 	  Feature uses a PPI channel.
@@ -135,8 +143,6 @@ config UART_1_ASYNC
 config UART_1_ENHANCED_POLL_OUT
 	bool "Efficient poll out on port 1"
 	default y
-	select NRFX_PPI if HAS_HW_NRF_PPI
-	select NRFX_DPPI if HAS_HW_NRF_DPPIC
 	help
 	  When enabled, polling out does not trigger interrupt which stops TX.
 	  Feature uses a PPI channel.
@@ -214,8 +220,6 @@ config UART_2_ASYNC
 config UART_2_ENHANCED_POLL_OUT
 	bool "Efficient poll out on port 2"
 	default y
-	select NRFX_PPI if HAS_HW_NRF_PPI
-	select NRFX_DPPI if HAS_HW_NRF_DPPIC
 	help
 	  When enabled, polling out does not trigger interrupt which stops TX.
 	  Feature uses a PPI channel.
@@ -292,8 +296,6 @@ config UART_3_ASYNC
 config UART_3_ENHANCED_POLL_OUT
 	bool "Efficient poll out on port 3"
 	default y
-	select NRFX_PPI if HAS_HW_NRF_PPI
-	select NRFX_DPPI if HAS_HW_NRF_DPPIC
 	help
 	  When enabled, polling out does not trigger interrupt which stops TX.
 	  Feature uses a PPI channel.
@@ -387,6 +389,17 @@ config NRFX_DPPI
 config UARTE_NRF_HW_ASYNC
 	bool
 	default y
+
+endif
+
+if UART_0_ENHANCED_POLL_OUT || UART_1_ENHANCED_POLL_OUT || \
+	UART_2_ENHANCED_POLL_OUT || UART_3_ENHANCED_POLL_OUT
+
+config UART_ENHANCED_POLL_OUT
+	bool
+	default y
+	select NRFX_PPI if HAS_HW_NRF_PPI
+	select NRFX_DPPI if HAS_HW_NRF_DPPIC
 
 endif
 

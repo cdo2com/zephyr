@@ -32,8 +32,6 @@ static struct k_thread *main_thread;
  *
  * @param unused of type k_work to make handler function accepted
  * by k_work_init
- *
- * @return N/A
  */
 static void common_work_handler(struct k_work_user *unused)
 {
@@ -128,7 +126,7 @@ static void twork_submit(const void *data)
  *
  * @ingroup kernel_workqueue_tests
  *
- * @see k_work_q_user_start()
+ * @see k_work_user_queue_start()
  */
 static void test_work_user_queue_start_before_submit(void)
 {

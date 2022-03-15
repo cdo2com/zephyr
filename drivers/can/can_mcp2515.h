@@ -14,10 +14,6 @@
 #define MCP2515_TX_CNT                   3
 #define MCP2515_FRAME_LEN               13
 
-#define DEV_CFG(dev) \
-	((const struct mcp2515_config *const)(dev)->config)
-#define DEV_DATA(dev) ((struct mcp2515_data *const)(dev)->data)
-
 struct mcp2515_tx_cb {
 	struct k_sem sem;
 	can_tx_callback_t cb;
@@ -25,13 +21,6 @@ struct mcp2515_tx_cb {
 };
 
 struct mcp2515_data {
-	/* spi device data */
-	const struct device *spi;
-	struct spi_config spi_cfg;
-#if DT_INST_SPI_DEV_HAS_CS_GPIOS(0)
-	struct spi_cs_control spi_cs_ctrl;
-#endif /* DT_INST_SPI_DEV_HAS_CS_GPIOS(0) */
-
 	/* interrupt data */
 	const struct device *int_gpio;
 	struct gpio_callback int_gpio_cb;
@@ -49,21 +38,18 @@ struct mcp2515_data {
 	can_rx_callback_t rx_cb[CONFIG_CAN_MAX_FILTER];
 	void *cb_arg[CONFIG_CAN_MAX_FILTER];
 	struct zcan_filter filter[CONFIG_CAN_MAX_FILTER];
-	can_state_change_isr_t state_change_isr;
+	can_state_change_callback_t state_change_cb;
+	void *state_change_cb_data;
 
 	/* general data */
 	struct k_mutex mutex;
 	enum can_state old_state;
+	uint8_t sjw;
 };
 
 struct mcp2515_config {
 	/* spi configuration */
-	const char *spi_port;
-	uint8_t spi_cs_pin;
-	uint8_t spi_cs_flags;
-	const char *spi_cs_port;
-	uint32_t spi_freq;
-	uint8_t spi_slave;
+	struct spi_dt_spec bus;
 
 	/* interrupt configuration */
 	uint8_t int_pin;

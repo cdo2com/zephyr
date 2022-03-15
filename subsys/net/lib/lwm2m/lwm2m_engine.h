@@ -91,7 +91,7 @@ int lwm2m_put_message_buf(uint8_t *buf);
 struct lwm2m_message *lwm2m_get_message(struct lwm2m_ctx *client_ctx);
 void lwm2m_reset_message(struct lwm2m_message *msg, bool release);
 int lwm2m_init_message(struct lwm2m_message *msg);
-int lwm2m_send_message(struct lwm2m_message *msg);
+int lwm2m_send_message_async(struct lwm2m_message *msg);
 int lwm2m_send_empty_ack(struct lwm2m_ctx *client_ctx, uint16_t mid);
 
 int lwm2m_register_payload_handler(struct lwm2m_message *msg);
@@ -104,13 +104,15 @@ int lwm2m_write_handler(struct lwm2m_engine_obj_inst *obj_inst,
 			struct lwm2m_engine_obj_field *obj_field,
 			struct lwm2m_message *msg);
 
+bool lwm2m_engine_bootstrap_override(struct lwm2m_ctx *client_ctx, struct lwm2m_obj_path *path);
+
 int lwm2m_discover_handler(struct lwm2m_message *msg, bool is_bootstrap);
 
 enum coap_block_size lwm2m_default_block_size(void);
 
 int lwm2m_engine_add_service(k_work_handler_t service, uint32_t period_ms);
 
-int lwm2m_engine_get_resource(char *pathstr,
+int lwm2m_engine_get_resource(const char *pathstr,
 			      struct lwm2m_engine_res **res);
 
 void lwm2m_engine_get_binding(char *binding);
@@ -128,9 +130,13 @@ int32_t lwm2m_server_get_pmax(uint16_t obj_inst_id);
 int lwm2m_server_short_id_to_inst(uint16_t short_id);
 
 #if defined(CONFIG_LWM2M_FIRMWARE_UPDATE_OBJ_SUPPORT)
-uint8_t lwm2m_firmware_get_update_state(void);
+void lwm2m_firmware_set_update_state_inst(uint16_t obj_inst_id, uint8_t state);
+void lwm2m_firmware_set_update_result_inst(uint16_t obj_inst_id, uint8_t result);
 void lwm2m_firmware_set_update_state(uint8_t state);
 void lwm2m_firmware_set_update_result(uint8_t result);
+uint8_t lwm2m_firmware_get_update_state_inst(uint16_t obj_inst_id);
+uint8_t lwm2m_firmware_get_update_state(void);
+uint8_t lwm2m_firmware_get_update_result_inst(uint16_t obj_inst_id);
 uint8_t lwm2m_firmware_get_update_result(void);
 #endif
 
@@ -144,6 +150,6 @@ const char *lwm2m_engine_get_attr_name(const struct lwm2m_attr *attr);
 int  lwm2m_socket_add(struct lwm2m_ctx *ctx);
 void lwm2m_socket_del(struct lwm2m_ctx *ctx);
 int  lwm2m_socket_start(struct lwm2m_ctx *client_ctx);
-int  lwm2m_parse_peerinfo(char *url, struct sockaddr *addr, bool *use_dtls);
+int  lwm2m_parse_peerinfo(char *url, struct lwm2m_ctx *client_ctx, bool is_firmware_uri);
 
 #endif /* LWM2M_ENGINE_H */

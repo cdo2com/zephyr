@@ -1,10 +1,9 @@
 .. _edac_api:
 
-Error Detection And Correction (EDAC) API
-#########################################
+Error Detection And Correction (EDAC)
+#####################################
 
 API Reference
 *************
 
 .. doxygengroup:: edac
-   :project: Zephyr

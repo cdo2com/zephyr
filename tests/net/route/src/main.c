@@ -51,6 +51,10 @@ static struct in6_addr my_addr = { { { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0,
 static struct in6_addr peer_addr = { { { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0,
 				    0, 0, 0, 0, 0x0b, 0x0e, 0x0e, 0x3 } } };
 
+/* Alternate next hop address for dest_addr */
+static struct in6_addr peer_addr_alt = { { { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0,
+				    0, 0, 0, 0, 0x0b, 0x0e, 0x0e, 0x4 } } };
+
 /* The dest_addr is only reachable via peer_addr */
 static struct in6_addr dest_addr = { { { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0,
 					 0, 0, 0, 0, 0xd, 0xe, 0x5, 0x7 } } };
@@ -218,14 +222,14 @@ static struct dummy_api net_route_if_api_peer = {
 #define _ETH_L2_CTX_TYPE NET_L2_GET_CTX_TYPE(DUMMY_L2)
 
 NET_DEVICE_INIT_INSTANCE(net_route_test, "net_route_test", host,
-			 net_route_dev_init, device_pm_control_nop,
+			 net_route_dev_init, NULL,
 			 &net_route_data, NULL,
 			 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
 			 &net_route_if_api, _ETH_L2_LAYER,
 			 _ETH_L2_CTX_TYPE, 127);
 
 NET_DEVICE_INIT_INSTANCE(net_route_test_peer, "net_route_test_peer", peer,
-			 net_route_dev_init, device_pm_control_nop,
+			 net_route_dev_init, NULL,
 			 &net_route_data_peer, NULL,
 			 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
 			 &net_route_if_api_peer, _ETH_L2_LAYER,
@@ -237,8 +241,8 @@ static void test_init(void)
 	struct net_if_addr *ifaddr;
 	int i;
 
-	my_iface = net_if_get_default();
-	peer_iface = net_if_get_default() + 1;
+	my_iface = net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY));
+	peer_iface = net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY)) + 1;
 
 	DBG("Interfaces: [%d] my %p, [%d] peer %p\n",
 	    net_if_get_by_iface(my_iface), my_iface,
@@ -341,8 +345,17 @@ static void test_populate_nbr_cache(void)
 
 	zassert_true(net_test_send_ns(peer_iface, &peer_addr), NULL);
 
-	nbr = net_ipv6_nbr_add(net_if_get_default(),
+	nbr = net_ipv6_nbr_add(net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY)),
 			       &peer_addr,
+			       &net_route_data_peer.ll_addr,
+			       false,
+			       NET_IPV6_NBR_STATE_REACHABLE);
+	zassert_not_null(nbr, "Cannot add peer to neighbor cache");
+
+	zassert_true(net_test_send_ns(peer_iface, &peer_addr_alt), NULL);
+
+	nbr = net_ipv6_nbr_add(net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY)),
+			       &peer_addr_alt,
 			       &net_route_data_peer.ll_addr,
 			       false,
 			       NET_IPV6_NBR_STATE_REACHABLE);
@@ -363,7 +376,9 @@ static void test_route_add(void)
 {
 	entry = net_route_add(my_iface,
 			      &dest_addr, 128,
-			      &peer_addr);
+			      &peer_addr,
+			      NET_IPV6_ND_INFINITE_LIFETIME,
+			      NET_ROUTE_PREFERENCE_LOW);
 
 	zassert_not_null(entry, "Route add failed");
 }
@@ -374,7 +389,9 @@ static void test_route_update(void)
 
 	update_entry = net_route_add(my_iface,
 				     &dest_addr, 128,
-				     &peer_addr);
+				     &peer_addr,
+				     NET_IPV6_ND_INFINITE_LIFETIME,
+				     NET_ROUTE_PREFERENCE_LOW);
 	zassert_equal_ptr(update_entry, entry,
 			  "Route add again failed");
 }
@@ -456,7 +473,9 @@ static void test_route_add_many(void)
 		    net_sprint_ipv6_addr(&dest_addresses[i]));
 		test_routes[i] = net_route_add(my_iface,
 					  &dest_addresses[i], 128,
-					  &peer_addr);
+					  &peer_addr,
+					  NET_IPV6_ND_INFINITE_LIFETIME,
+					  NET_ROUTE_PREFERENCE_LOW);
 		zassert_not_null(test_routes[i], "Route add failed");
 		}
 }
@@ -472,6 +491,59 @@ static void test_route_del_many(void)
 			      " Route del failed");
 	}
 }
+
+static void test_route_lifetime(void)
+{
+	entry = net_route_add(my_iface,
+			      &dest_addr, 128,
+			      &peer_addr,
+			      NET_IPV6_ND_INFINITE_LIFETIME,
+			      NET_ROUTE_PREFERENCE_LOW);
+
+	zassert_not_null(entry, "Route add failed");
+
+	entry = net_route_lookup(my_iface, &dest_addr);
+	zassert_not_null(entry, "Route not found");
+
+	net_route_update_lifetime(entry, 1);
+
+	k_sleep(K_MSEC(1200));
+
+	entry = net_route_lookup(my_iface, &dest_addr);
+	zassert_is_null(entry, "Route did not expire");
+
+}
+
+static void test_route_preference(void)
+{
+	struct net_route_entry *update_entry;
+
+	entry = net_route_add(my_iface,
+			      &dest_addr, 128,
+			      &peer_addr,
+			      NET_IPV6_ND_INFINITE_LIFETIME,
+			      NET_ROUTE_PREFERENCE_LOW);
+	zassert_not_null(entry, "Route add failed");
+
+	update_entry = net_route_add(my_iface,
+				     &dest_addr, 128,
+				     &peer_addr_alt,
+				     NET_IPV6_ND_INFINITE_LIFETIME,
+				     NET_ROUTE_PREFERENCE_MEDIUM);
+	zassert_equal_ptr(update_entry, entry,
+			  "Route add again failed");
+
+	update_entry = net_route_add(my_iface,
+				     &dest_addr, 128,
+				     &peer_addr,
+				     NET_IPV6_ND_INFINITE_LIFETIME,
+				     NET_ROUTE_PREFERENCE_LOW);
+	zassert_is_null(update_entry,
+			"Low preference route overwritten medium one");
+
+	net_route_del(entry);
+}
+
 
 /*test case main entry*/
 void test_main(void)
@@ -492,6 +564,8 @@ void test_main(void)
 			ztest_unit_test(test_route_del_nexthop_again),
 			ztest_unit_test(test_populate_nbr_cache),
 			ztest_unit_test(test_route_add_many),
-			ztest_unit_test(test_route_del_many));
+			ztest_unit_test(test_route_del_many),
+			ztest_unit_test(test_route_lifetime),
+			ztest_unit_test(test_route_preference));
 	ztest_run_test_suite(test_route);
 }

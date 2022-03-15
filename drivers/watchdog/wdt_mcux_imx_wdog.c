@@ -13,7 +13,7 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(wdt_mcux_wdog);
 
-#define WDOG_TMOUT_SEC(x)  ((x * 2 / MSEC_PER_SEC) - 1)
+#define WDOG_TMOUT_SEC(x)  (((x * 2) / MSEC_PER_SEC) - 1)
 
 struct mcux_wdog_config {
 	WDOG_Type *base;
@@ -74,6 +74,11 @@ static int mcux_wdog_install_timeout(const struct device *dev,
 
 	WDOG_GetDefaultConfig(&data->wdog_config);
 	data->wdog_config.interruptTimeValue = 0U;
+
+	if (cfg->window.max < (MSEC_PER_SEC / 2)) {
+		LOG_ERR("Invalid window max, shortest window is 500ms");
+		return -EINVAL;
+	}
 
 	data->wdog_config.timeoutValue =
 		  WDOG_TMOUT_SEC(cfg->window.max);
@@ -153,7 +158,7 @@ static struct mcux_wdog_data mcux_wdog_data;
 
 DEVICE_DT_INST_DEFINE(0,
 		    &mcux_wdog_init,
-		    device_pm_control_nop,
+		    NULL,
 		    &mcux_wdog_data, &mcux_wdog_config,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &mcux_wdog_api);

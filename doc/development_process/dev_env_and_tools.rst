@@ -23,7 +23,7 @@ submitting a change or an enhancement to any Zephyr component, a developer
 should use GitHub. GitHub automatically assigns a responsible reviewer on a
 component basis, as defined in the :zephyr_file:`CODEOWNERS` file stored with the code
 tree in the Zephyr project repository. A limited set of release managers are
-allowed to merge a pull request into the master branch once reviews are complete.
+allowed to merge a pull request into the main branch once reviews are complete.
 
 .. _review_time:
 
@@ -177,7 +177,6 @@ dismissed following the criteria below:
   structural changes such as:
 
   - Split the PR
-  - Split the commits
   - Can you fix this unrelated code that happens to appear in the diff
   - Can you fix unrelated issues
   - Etc.

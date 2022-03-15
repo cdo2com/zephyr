@@ -19,11 +19,8 @@ LOG_MODULE_REGISTER(esp32_wifi, CONFIG_WIFI_LOG_LEVEL);
 #include "esp_private/wifi.h"
 #include "esp_event.h"
 #include "esp_timer.h"
-#include "esp_wifi_system.h"
+#include "esp_system.h"
 #include "esp_wpa.h"
-
-#define DEV_DATA(dev) \
-	((struct esp32_wifi_runtime *)(dev)->data)
 
 /* use global iface pointer to support any ethernet driver */
 /* necessary for wifi callback functions */
@@ -41,17 +38,46 @@ struct esp32_wifi_runtime {
 #endif
 };
 
+static void esp_wifi_event_task(void);
+
+K_MSGQ_DEFINE(esp_wifi_msgq, sizeof(system_event_t), 10, 4);
+K_THREAD_STACK_DEFINE(esp_wifi_event_stack, CONFIG_ESP32_WIFI_EVENT_TASK_STACK_SIZE);
+static struct k_thread esp_wifi_event_thread;
+
+/* internal wifi library callback function */
+esp_err_t esp_event_send_internal(esp_event_base_t event_base,
+				  int32_t event_id,
+				  void *event_data,
+				  size_t event_data_size,
+				  uint32_t ticks_to_wait)
+{
+	system_event_t evt = {
+		.event_id = event_id,
+	};
+
+	if (event_data_size > sizeof(evt.event_info)) {
+		LOG_ERR("MSG %d wont find %d > %d",
+			event_id, event_data_size, sizeof(evt.event_info));
+		return ESP_FAIL;
+	}
+
+	memcpy(&evt.event_info, event_data, event_data_size);
+	k_msgq_put(&esp_wifi_msgq, &evt, K_FOREVER);
+	return ESP_OK;
+}
+
 static int eth_esp32_send(const struct device *dev, struct net_pkt *pkt)
 {
+	struct esp32_wifi_runtime *data = dev->data;
 	const int pkt_len = net_pkt_get_len(pkt);
 
 	/* Read the packet payload */
-	if (net_pkt_read(pkt, DEV_DATA(dev)->frame_buf, pkt_len) < 0) {
+	if (net_pkt_read(pkt, data->frame_buf, pkt_len) < 0) {
 		return -EIO;
 	}
 
 	/* Enqueue packet for transmission */
-	esp_wifi_internal_tx(ESP_IF_WIFI_STA, (void *)DEV_DATA(dev)->frame_buf, pkt_len);
+	esp_wifi_internal_tx(ESP_IF_WIFI_STA, (void *)data->frame_buf, pkt_len);
 
 	LOG_DBG("pkt sent %p len %d", pkt, pkt_len);
 
@@ -92,25 +118,44 @@ pkt_unref:
 	return ESP_FAIL;
 }
 
-/* internally used by wifi hal layer */
-void esp_wifi_set_net_state(bool state)
+static void esp_wifi_event_task(void)
 {
-	if (esp32_wifi_iface == NULL) {
-		LOG_ERR("network interface unavailable");
-		return;
-	}
+	system_event_t evt;
 
-	if (state) {
-		net_if_up(esp32_wifi_iface);
-	} else {
-		net_if_down(esp32_wifi_iface);
+	while (1) {
+		k_msgq_get(&esp_wifi_msgq, &evt, K_FOREVER);
+
+		switch (evt.event_id) {
+		case ESP32_WIFI_EVENT_STA_START:
+			LOG_INF("WIFI_EVENT_STA_START");
+			net_if_up(esp32_wifi_iface);
+			break;
+		case ESP32_WIFI_EVENT_STA_STOP:
+			LOG_INF("WIFI_EVENT_STA_STOP");
+			net_if_down(esp32_wifi_iface);
+			break;
+		case ESP32_WIFI_EVENT_STA_CONNECTED:
+			LOG_INF("WIFI_EVENT_STA_CONNECTED");
+			net_eth_carrier_on(esp32_wifi_iface);
+			break;
+		case ESP32_WIFI_EVENT_STA_DISCONNECTED:
+			LOG_INF("WIFI_EVENT_STA_DISCONNECTED");
+			net_eth_carrier_off(esp32_wifi_iface);
+
+			if (IS_ENABLED(CONFIG_ESP32_WIFI_STA_RECONNECT)) {
+				esp_wifi_connect();
+			}
+			break;
+		default:
+			break;
+		}
 	}
 }
 
 static void eth_esp32_init(struct net_if *iface)
 {
 	const struct device *dev = net_if_get_device(iface);
-	struct esp32_wifi_runtime *dev_data = DEV_DATA(dev);
+	struct esp32_wifi_runtime *dev_data = dev->data;
 
 	dev_data->iface = iface;
 	esp32_wifi_iface = iface;
@@ -131,14 +176,23 @@ static void eth_esp32_init(struct net_if *iface)
 #if defined(CONFIG_NET_STATISTICS_ETHERNET)
 static struct net_stats_eth *eth_esp32_stats(const struct device *dev)
 {
-	return &(DEV_DATA(dev)->stats);
+	struct esp32_wifi_runtime *data = dev->data;
+
+	return &(data->stats);
 }
 #endif
 
 static int eth_esp32_dev_init(const struct device *dev)
 {
 	esp_timer_init();
-	esp_event_init();
+
+	k_tid_t tid = k_thread_create(&esp_wifi_event_thread, esp_wifi_event_stack,
+			CONFIG_ESP32_WIFI_EVENT_TASK_STACK_SIZE,
+			(k_thread_entry_t)esp_wifi_event_task, NULL, NULL, NULL,
+			CONFIG_ESP32_WIFI_EVENT_TASK_PRIO, K_INHERIT_PERMS,
+			K_NO_WAIT);
+
+	k_thread_name_set(tid, "esp_event");
 
 	wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
 	esp_err_t ret = esp_wifi_init(&config);
@@ -178,7 +232,7 @@ static const struct ethernet_api eth_esp32_apis = {
 };
 
 NET_DEVICE_DT_INST_DEFINE(0,
-		eth_esp32_dev_init, device_pm_control_nop,
+		eth_esp32_dev_init, NULL,
 		&eth_data, NULL, CONFIG_ETH_INIT_PRIORITY,
 		&eth_esp32_apis, ETHERNET_L2,
 		NET_L2_GET_CTX_TYPE(ETHERNET_L2), NET_ETH_MTU);

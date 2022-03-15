@@ -70,7 +70,7 @@ static int vl53l0x_channel_get(const struct device *dev,
 			       enum sensor_channel chan,
 			       struct sensor_value *val)
 {
-	struct vl53l0x_data *drv_data = (struct vl53l0x_data *)dev->data;
+	struct vl53l0x_data *drv_data = dev->data;
 
 	__ASSERT_NO_MSG(chan == SENSOR_CHAN_DISTANCE
 			|| chan == SENSOR_CHAN_PROX);
@@ -283,6 +283,6 @@ static int vl53l0x_init(const struct device *dev)
 
 static struct vl53l0x_data vl53l0x_driver;
 
-DEVICE_DT_INST_DEFINE(0, vl53l0x_init, device_pm_control_nop, &vl53l0x_driver,
+DEVICE_DT_INST_DEFINE(0, vl53l0x_init, NULL, &vl53l0x_driver,
 		    NULL, POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY,
 		    &vl53l0x_api_funcs);

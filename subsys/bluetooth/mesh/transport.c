@@ -1,5 +1,3 @@
-/*  Bluetooth Mesh */
-
 /*
  * Copyright (c) 2017 Intel Corporation
  *
@@ -115,7 +113,7 @@ static struct seg_tx {
 			      friend_cred:1; /* Using Friend credentials */
 	const struct bt_mesh_send_cb *cb;
 	void                  *cb_data;
-	struct k_delayed_work retransmit;    /* Retransmit timer */
+	struct k_work_delayable retransmit;    /* Retransmit timer */
 } seg_tx[CONFIG_BT_MESH_TX_SEG_MSG_COUNT];
 
 static struct seg_rx {
@@ -133,7 +131,7 @@ static struct seg_rx {
 	uint8_t                     ttl;
 	uint32_t                    block;
 	uint32_t                    last;
-	struct k_delayed_work    ack;
+	struct k_work_delayable  ack;
 } seg_rx[CONFIG_BT_MESH_RX_SEG_MSG_COUNT];
 
 K_MEM_SLAB_DEFINE(segs, BT_MESH_APP_SEG_SDU_MAX, CONFIG_BT_MESH_SEG_BUFS, 4);
@@ -146,7 +144,8 @@ static int send_unseg(struct bt_mesh_net_tx *tx, struct net_buf_simple *sdu,
 {
 	struct net_buf *buf;
 
-	buf = bt_mesh_adv_create(BT_MESH_ADV_DATA, tx->xmit, BUF_TIMEOUT);
+	buf = bt_mesh_adv_create(BT_MESH_ADV_DATA, BT_MESH_LOCAL_ADV,
+				 tx->xmit, BUF_TIMEOUT);
 	if (!buf) {
 		BT_ERR("Out of network buffers");
 		return -ENOBUFS;
@@ -247,7 +246,7 @@ static void seg_tx_unblock_check(struct seg_tx *tx)
 		BT_DBG("Unblocked 0x%04x",
 		       (uint16_t)(blocked->seq_auth & TRANS_SEQ_ZERO_MASK));
 		blocked->blocked = false;
-		k_delayed_work_submit(&blocked->retransmit, K_NO_WAIT);
+		k_work_reschedule(&blocked->retransmit, K_NO_WAIT);
 	}
 }
 
@@ -255,7 +254,8 @@ static void seg_tx_reset(struct seg_tx *tx)
 {
 	int i;
 
-	k_delayed_work_cancel(&tx->retransmit);
+	/* If this call fails, the handler will exit early, as nack_count is 0. */
+	(void)k_work_cancel_delayable(&tx->retransmit);
 
 	tx->cb = NULL;
 	tx->cb_data = NULL;
@@ -315,9 +315,9 @@ static void schedule_retransmit(struct seg_tx *tx)
 	 * called this from inside bt_mesh_net_send), we should continue the
 	 * retransmit immediately, as we just freed up a tx buffer.
 	 */
-	k_delayed_work_submit(&tx->retransmit,
-			      tx->seg_o ? K_NO_WAIT :
-					  K_MSEC(SEG_RETRANSMIT_TIMEOUT(tx)));
+	k_work_reschedule(&tx->retransmit,
+			  tx->seg_o ? K_NO_WAIT :
+			  K_MSEC(SEG_RETRANSMIT_TIMEOUT(tx)));
 }
 
 static void seg_send_start(uint16_t duration, int err, void *user_data)
@@ -413,8 +413,8 @@ static void seg_tx_send_unacked(struct seg_tx *tx)
 			continue;
 		}
 
-		seg = bt_mesh_adv_create(BT_MESH_ADV_DATA, tx->xmit,
-					 BUF_TIMEOUT);
+		seg = bt_mesh_adv_create(BT_MESH_ADV_DATA, BT_MESH_LOCAL_ADV,
+					 tx->xmit, BUF_TIMEOUT);
 		if (!seg) {
 			BT_DBG("Allocating segment failed");
 			goto end;
@@ -440,8 +440,8 @@ static void seg_tx_send_unacked(struct seg_tx *tx)
 
 end:
 	if (!tx->seg_pending) {
-		k_delayed_work_submit(&tx->retransmit,
-				      K_MSEC(SEG_RETRANSMIT_TIMEOUT(tx)));
+		k_work_reschedule(&tx->retransmit,
+				  K_MSEC(SEG_RETRANSMIT_TIMEOUT(tx)));
 	}
 
 	tx->sending = 0U;
@@ -449,7 +449,8 @@ end:
 
 static void seg_retransmit(struct k_work *work)
 {
-	struct seg_tx *tx = CONTAINER_OF(work, struct seg_tx, retransmit);
+	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+	struct seg_tx *tx = CONTAINER_OF(dwork, struct seg_tx, retransmit);
 
 	seg_tx_send_unacked(tx);
 }
@@ -859,8 +860,6 @@ static int trans_ack(struct bt_mesh_net_rx *rx, uint8_t hdr,
 		return -EINVAL;
 	}
 
-	k_delayed_work_cancel(&tx->retransmit);
-
 	while ((bit = find_lsb_set(ack))) {
 		if (tx->seg[bit - 1]) {
 			BT_DBG("seg %u/%u acked", bit - 1, tx->seg_n);
@@ -871,7 +870,11 @@ static int trans_ack(struct bt_mesh_net_rx *rx, uint8_t hdr,
 	}
 
 	if (tx->nack_count) {
-		seg_tx_send_unacked(tx);
+		/* According to the Bluetooth Mesh Profile specification,
+		 * section 3.5.3.3, we should reset the retransmit timer and
+		 * retransmit immediately when receiving a valid ack message:
+		 */
+		k_work_reschedule(&tx->retransmit, K_NO_WAIT);
 	} else {
 		BT_DBG("SDU TX complete");
 		seg_tx_complete(tx, 0);
@@ -1090,7 +1093,10 @@ static void seg_rx_reset(struct seg_rx *rx, bool full_reset)
 
 	BT_DBG("rx %p", rx);
 
-	k_delayed_work_cancel(&rx->ack);
+	/* If this fails, the handler will exit early on the next execution, as
+	 * it checks rx->in_use.
+	 */
+	(void)k_work_cancel_delayable(&rx->ack);
 
 	if (IS_ENABLED(CONFIG_BT_MESH_FRIEND) && rx->obo &&
 	    rx->block != BLOCK_COMPLETE(rx->seg_n)) {
@@ -1124,8 +1130,19 @@ static void seg_rx_reset(struct seg_rx *rx, bool full_reset)
 
 static void seg_ack(struct k_work *work)
 {
-	struct seg_rx *rx = CONTAINER_OF(work, struct seg_rx, ack);
+	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+	struct seg_rx *rx = CONTAINER_OF(dwork, struct seg_rx, ack);
 	int32_t timeout;
+
+	if (!rx->in_use || rx->block == BLOCK_COMPLETE(rx->seg_n)) {
+		/* Cancellation of this timer may have failed. If it fails as
+		 * part of seg_reset, in_use will be false.
+		 * If it fails as part of the processing of a fully received
+		 * SDU, the ack is already being sent from the receive handler,
+		 * and the timer based ack sending can be ignored.
+		 */
+		return;
+	}
 
 	BT_DBG("rx %p", rx);
 
@@ -1144,7 +1161,7 @@ static void seg_ack(struct k_work *work)
 		 rx->block, rx->obo);
 
 	timeout = ack_timeout(rx);
-	k_delayed_work_submit(&rx->ack, K_MSEC(timeout));
+	k_work_schedule(&rx->ack, K_MSEC(timeout));
 }
 
 static inline bool sdu_len_is_ok(bool ctl, uint8_t seg_n)
@@ -1447,11 +1464,10 @@ found_rx:
 	/* Reset the Incomplete Timer */
 	rx->last = k_uptime_get_32();
 
-	if (!k_delayed_work_remaining_get(&rx->ack) &&
-	    !bt_mesh_lpn_established()) {
+	if (!bt_mesh_lpn_established()) {
 		int32_t timeout = ack_timeout(rx);
-
-		k_delayed_work_submit(&rx->ack, K_MSEC(timeout));
+		/* Should only start ack timer if it isn't running already: */
+		k_work_schedule(&rx->ack, K_MSEC(timeout));
 	}
 
 	/* Allocated segment here */
@@ -1487,7 +1503,10 @@ found_rx:
 
 	*pdu_type = BT_MESH_FRIEND_PDU_COMPLETE;
 
-	k_delayed_work_cancel(&rx->ack);
+	/* If this fails, the work handler will either exit early because the
+	 * block is fully received, or rx->in_use is false.
+	 */
+	(void)k_work_cancel_delayable(&rx->ack);
 	send_ack(net_rx->sub, net_rx->ctx.recv_dst, net_rx->ctx.addr,
 		 net_rx->ctx.send_ttl, seq_auth, rx->block, rx->obo);
 
@@ -1643,11 +1662,11 @@ void bt_mesh_trans_init(void)
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(seg_tx); i++) {
-		k_delayed_work_init(&seg_tx[i].retransmit, seg_retransmit);
+		k_work_init_delayable(&seg_tx[i].retransmit, seg_retransmit);
 	}
 
 	for (i = 0; i < ARRAY_SIZE(seg_rx); i++) {
-		k_delayed_work_init(&seg_rx[i].ack, seg_ack);
+		k_work_init_delayable(&seg_rx[i].ack, seg_ack);
 	}
 }
 

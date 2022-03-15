@@ -119,7 +119,7 @@ static const struct memc_stm32_sdram_bank_config bank_config[] = {
 
 /** SDRAM configuration. */
 static const struct memc_stm32_sdram_config config = {
-	.sdram = (FMC_SDRAM_TypeDef *)(DT_REG_ADDR(DT_PARENT(DT_DRV_INST(0))) +
+	.sdram = (FMC_SDRAM_TypeDef *)(DT_REG_ADDR(DT_INST_PARENT(0)) +
 				       SDRAM_OFFSET),
 	.power_up_delay = DT_INST_PROP(0, power_up_delay),
 	.num_auto_refresh = DT_INST_PROP(0, num_auto_refresh),
@@ -129,5 +129,5 @@ static const struct memc_stm32_sdram_config config = {
 	.banks_len = ARRAY_SIZE(bank_config),
 };
 
-DEVICE_DT_INST_DEFINE(0, memc_stm32_sdram_init, device_pm_control_nop,
+DEVICE_DT_INST_DEFINE(0, memc_stm32_sdram_init, NULL,
 	      NULL, &config, POST_KERNEL, CONFIG_MEMC_INIT_PRIORITY, NULL);
