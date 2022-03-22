@@ -28,6 +28,9 @@ static inline void z_shell_raw_fprintf(const struct shell_fprintf *const ctx,
 /* Macro to send VT100 commands. */
 #define Z_SHELL_VT100_CMD(_shell_, _cmd_)				\
 	do {								\
+		if (!IS_ENABLED(CONFIG_SHELL_VT100_COMMANDS))		\
+			break;						\
+									\
 		static const char cmd[] = _cmd_;			\
 		z_shell_raw_fprintf(_shell_->fprintf_ctx, "%s", cmd);	\
 	} while (0)
@@ -213,6 +216,19 @@ static inline bool z_flag_print_noinit_set(const struct shell *shell, bool val)
 	bool ret;
 
 	Z_SHELL_SET_FLAG_ATOMIC(shell, print_noinit, val, ret);
+	return ret;
+}
+
+static inline bool z_flag_panic_mode_get(const struct shell *sh)
+{
+	return sh->ctx->internal.flags.panic_mode == 1;
+}
+
+static inline bool z_flag_panic_mode_set(const struct shell *sh, bool val)
+{
+	bool ret;
+
+	Z_SHELL_SET_FLAG_ATOMIC(sh, panic_mode, val, ret);
 	return ret;
 }
 
